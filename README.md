@@ -1,59 +1,121 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
-
 <p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
+  <img src="public/favicon.ico" alt="Distora Logo" width="80" height="80">
 </p>
 
-## About Laravel
+<h1 align="center">Distora Analytics</h1>
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+<p align="center">
+  <strong>Advanced Sales & Data Analytics Dashboard for Enterprise</strong><br>
+  Built with Laravel 12.0
+</p>
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+---
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## 📌 Deskripsi Singkat
 
-## Learning Laravel
+**Distora Analytics** adalah sistem pelaporan dan analitik penjualan kelas *enterprise* yang dirancang khusus untuk mengelola, menganalisis, dan memvisualisasikan data transaksi penjualan & retur dari file Excel secara massal. Sistem ini mempermudah pimpinan dan tim sales dalam memantau target KPI, pertumbuhan laba, performa produk, dan produktivitas setiap tenaga penjual.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+### Fitur Utama:
+- 📊 **Smart Excel Importer**: Fitur *upload* data transaksi besar-besaran dengan sistem validasi, format massal, dan proteksi memori, langsung membaca file `.xlsx` distributor/principal.
+- 👥 **Role-Based Access Control (RBAC)**: Pemisahan hak akses antara **Admin** (kendali penuh) dan **Salesman** (hanya melihat KPI dan riwayat pelanggan mereka sendiri).
+- 📈 **Personalized Salesman Dashboard**: Layar khusus *mobile-friendly* bagi *salesman* untuk melacak progres % KPI, daftar toko yang di-cover, dan detail penjualan secara *real-time*.
+- 📉 **Comprehensive Reports & Analytics**: 12+ format laporan siap pakai menggunakan Chart.js (Summary Omzet, Top Sales, Slow Moving, Retur, dll).
+- 📅 **Sistem Tutup Buku**: Manajemen *Period* yang mengamankan integritas data bulanan agar laporan tidak tumpang tindih.
+- ✉️ **Automated Daily Email Recap**: Robot yang mengirimkan performa tutup harian (Omzet, Top Produk, dan Target Achievers) langsung ke email Admin/Manager setiap jam 5 sore.
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-## Laravel Sponsors
+## 💻 Persyaratan Server (Requirements)
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+Sebelum melakukan instalasi, pastikan *Environment/Server* kamu memenuhi spesifikasi berikut:
+- **PHP** >= 8.2
+- **Composer** v2+
+- **MySQL** >= 8.0 (atau MariaDB setara)
+- Ekstensi PHP: `mbstring`, `zip`, `pdo_mysql`, `gd`, `xml`, `curl`. (Cek di `php.ini`).
 
-### Premium Partners
+---
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+## 🚀 Panduan Instalasi (Lokal / Windows XAMPP)
 
-## Contributing
+Ikuti langkah-langkah di bawah ini untuk menjalankan Distora secara lokal di komputer Windows atau Mac kamu:
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+### 1. Clone Repositori
+Jalankan perintah ini di Terminal (Git Bash atau CMD):
+```bash
+git clone https://github.com/Rijalinor/distora.git
+cd distora
+```
 
-## Code of Conduct
+### 2. Install Dependensi PHP
+Jalankan Composer untuk mengunduh semua library core Laravel:
+```bash
+composer install
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### 3. Konfigurasi Environment (`.env`)
+Salin file konfigurasi bawaan dan ubah namanya menjadi `.env`:
+```bash
+cp .env.example .env
+```
+Buka file `.env` di Code Editor kamu, dan sesuaikan detail Database MySQL-nya:
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=distora2
+DB_USERNAME=root
+DB_PASSWORD=
+```
+*(Catatan: Buat database kosong bernama `distora2` di phpMyAdmin sebelum lanjut ke langkah ke-5).*
 
-## Security Vulnerabilities
+### 4. Generate Application Key
+```bash
+php artisan key:generate
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### 5. Setup Database & Akun Default (Migrasi)
+Jalankan file migrasi untuk membentuk struktur tabel secara otomatis, sekaligus mengisi data awal (seeder):
+```bash
+php artisan migrate:fresh --seed
+```
 
-## License
+### 6. Jalankan Server
+Sistem Distora Analytics sudah siap! Jalankan *local development server*:
+```bash
+php artisan serve
+```
+Aplikasi bisa diakses di browser melalui: **http://127.0.0.1:8000**
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+## 🔑 Akun Uji Coba (Login)
+
+Setelah instalasi (dan seeding) selesai, gunakan akun bawaan ini untuk mengakses sistem:
+
+**Sebagai Admin (Full Access)**
+- **Email:** `admin@distora.com`
+- **Password:** `password`
+
+**Sebagai Salesman (Scoped Access)**
+*(Note: Data dashboard salesman baru akan muncul setelah Admin melakukan Upload Excel data transaksi bulanan yang ada nama salesman-nya).*
+- **Email:** `sales@distora.com`
+- **Password:** `password`
+
+---
+
+## ⚙️ Fitur Tambahan (Cron Job / Email Otomatis)
+
+Sistem Distora dilengkapi pengiriman Email Rekap Harian otomatis setiap pukul 17.00.
+Untuk mengaktifkannya:
+1. Setel *SMTP* di file `.env` kamu (contoh `MAIL_MAILER=smtp`, dst).
+2. Jika jalan di server sungguhan (Linux/CPanel), tambahkan perintah ini di Cron Job server:
+   `* * * * * cd /path-ke-folder-distora && php artisan schedule:run >> /dev/null 2>&1`
+3. Jika dijalankan di Windows/XAMPP untuk testing lokal, buka 1 tab terminal khusus dan ketik:
+   `php artisan schedule:work`
+
+---
+
+<p align="center">
+  Didesain dan dikembangkan sebagai solusi modern <strong>Distribution Analytics System</strong>. <br>
+  Semoga sukses menjaga target! 🎯🚀
+</p>
