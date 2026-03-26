@@ -6,7 +6,7 @@
     <div>
         <a href="{{ route('insights.index') }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">← Kembali</a>
         <h1 style="font-size: 1.5rem; font-weight: 700;">🏪 Principal Intelligence: {{ $selected_principle }}</h1>
-        <p style="color: var(--text-muted); font-size: 0.9rem;">Laporan menyeluruh performa brand dalam <strong>90 Hari Terakhir</strong>.</p>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Analisis 360 derajat performa brand dalam <strong>90 Hari Terakhir</strong>.</p>
     </div>
 
     <div style="display: flex; gap: 1rem;">
@@ -33,71 +33,108 @@
 
 @if($summary)
 <!-- Summary Cards -->
-<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin-bottom: 2rem;">
-    <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid var(--accent);">
-        <div style="color: var(--text-muted); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Total Omzet (90 Hari)</div>
-        <div style="font-size: 1.5rem; font-weight: 800; color: var(--text-primary);">Rp {{ number_format($summary->total_value, 0, ',', '.') }}</div>
+<div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-bottom: 2rem;">
+    <!-- Gross Sales -->
+    <div style="background: var(--bg-card); padding: 1.2rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid var(--accent);">
+        <div style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Omzet Kotor</div>
+        <div style="font-size: 1.2rem; font-weight: 800; color: var(--text-primary);">Rp {{ number_format($summary->gross_value, 0, ',', '.') }}</div>
     </div>
-    <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid #10b981;">
-        <div style="color: var(--text-muted); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Volume Terjual</div>
-        <div style="font-size: 1.5rem; font-weight: 800; color: #10b981;">{{ number_format($summary->total_qty, 0, ',', '.') }} <span style="font-size: 0.9rem; font-weight: 400;">Unit</span></div>
+    <!-- Returns -->
+    <div style="background: var(--bg-card); padding: 1.2rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid #ef4444;">
+        <div style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Total Retur</div>
+        <div style="font-size: 1.2rem; font-weight: 800; color: #ef4444;">Rp {{ number_format($summary->return_value, 0, ',', '.') }}</div>
     </div>
-    <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid #f59e0b;">
-        <div style="color: var(--text-muted); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Outlet Coverage</div>
-        <div style="font-size: 1.5rem; font-weight: 800; color: #f59e0b;">{{ number_format($summary->total_outlets, 0, ',', '.') }} <span style="font-size: 0.9rem; font-weight: 400;">Toko Aktif</span></div>
+    <!-- Net Sales (Featured) -->
+    <div style="background: var(--bg-card); padding: 1.2rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid #10b981; box-shadow: 0 4px 20px rgba(16, 185, 129, 0.1);">
+        <div style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Omzet Bersih ✨</div>
+        <div style="font-size: 1.2rem; font-weight: 800; color: #10b981;">Rp {{ number_format($summary->net_value, 0, ',', '.') }}</div>
+    </div>
+    <!-- Growth -->
+    <div style="background: var(--bg-card); padding: 1.2rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid #3b82f6;">
+        <div style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Growth (30 Hari)</div>
+        <div style="font-size: 1.2rem; font-weight: 800; color: {{ $growth30 >= 0 ? '#10b981' : '#ef4444' }};">
+            {!! $growth30 >= 0 ? '↑' : '↓' !!} {{ abs($growth30) }}%
+        </div>
+    </div>
+    <!-- Coverage -->
+    <div style="background: var(--bg-card); padding: 1.2rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid #f59e0b;">
+        <div style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Outlet Coverage</div>
+        <div style="font-size: 1.2rem; font-weight: 800; color: #f59e0b;">{{ number_format($summary->total_outlets, 0, ',', '.') }} <span style="font-size: 0.8rem; font-weight: 400;">Toko</span></div>
     </div>
 </div>
 
-<!-- Main Section: Trends -->
-<div style="background: var(--bg-card); padding: 2rem; border-radius: 16px; border: 1px solid var(--border); margin-bottom: 2rem;">
-    <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">📉 Tren Penjualan Mingguan</h3>
-    <div style="height: 350px;">
-        <canvas id="trendChart"></canvas>
+<div class="grid-layout" style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+    <!-- Trends Section -->
+    <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border);">
+        <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">📈 Tren Penjualan Mingguan</h3>
+        <div style="height: 300px;">
+            <canvas id="trendChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Alert / Risk Analysis -->
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <!-- Sleeper Alert -->
+        <div style="background: rgba(239, 68, 68, 0.05); padding: 1.5rem; border-radius: 16px; border: 1px solid #ef4444;">
+            <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: #ef4444; display: flex; align-items: center; gap: 0.5rem;">⚠️ Top Toko Hampir Hilang</h3>
+            <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1rem;">Toko VIP brand ini yang tidak belanja > 14 hari.</p>
+            @forelse($sleepers as $s)
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                    <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">{{ $s->name }}</div>
+                    <div style="font-size: 0.75rem; color: #ef4444; font-weight: 800;">{{ $s->days }} Hari</div>
+                </div>
+            @empty
+                <div style="font-size: 0.85rem; color: #10b981;">✅ Semua toko VIP terpantau aktif.</div>
+            @endforelse
+        </div>
+
+        <!-- Return Summary -->
+        <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border); border-left: 4px solid #ef4444;">
+            <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem;">📦 Produk Sering Retur</h3>
+            @forelse($returns as $r)
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <div style="font-size: 0.8rem; color: var(--text-primary); max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ $r->name }}</div>
+                    <div style="font-size: 0.8rem; color: #ef4444; font-weight: 700;">Rp {{ number_format($r->value, 0, ',', '.') }}</div>
+                </div>
+            @empty
+                <div style="font-size: 0.85rem; color: #10b981;">✅ Tidak ada retur signifikan.</div>
+            @endforelse
+        </div>
     </div>
 </div>
 
-<!-- Analytics Grid -->
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+<div class="grid-layout" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+    <!-- City Breakdown -->
+    <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border);">
+        <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1.5rem; color: #3b82f6;">🏙️ Analisis Per Kota</h3>
+        <div style="height: 250px;">
+            <canvas id="cityChart"></canvas>
+        </div>
+    </div>
+
     <!-- Top Products -->
     <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border);">
-        <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1.2rem; color: var(--accent);">🏆 Produk Terlaris (Top 10)</h3>
+        <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1.2rem; color: var(--accent);">🏆 Produk Terlaris (Pareto)</h3>
         <table style="width: 100%; border-collapse: collapse;">
             <tbody>
                 @foreach($topProducts as $p)
                 <tr style="border-bottom: 1px solid var(--border);">
-                    <td style="padding: 0.75rem 0.5rem;"><strong style="color: var(--text-primary); font-size: 0.85rem;">{{ $p->name }}</strong></td>
-                    <td style="padding: 0.75rem 0.5rem; text-align: right; font-weight: 700; color: var(--text-primary);">Rp {{ number_format($p->value, 0, ',', '.') }}</td>
+                    <td style="padding: 0.5rem;"><strong style="color: var(--text-primary); font-size: 0.8rem;">{{ $p->name }}</strong></td>
+                    <td style="padding: 0.5rem; text-align: right; font-weight: 700; color: var(--text-primary); font-size: 0.8rem;">Rp {{ number_format($p->value/1000000, 1) }}jt</td>
                 </tr>
                 @endforeach
             </tbody>
         </table>
     </div>
 
-    <!-- Top Outlets -->
+    <!-- Salesman Per Principle -->
     <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border);">
-        <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1.2rem; color: #f59e0b;">🏰 Outlet Terloyal (Top 10)</h3>
-        <table style="width: 100%; border-collapse: collapse;">
-            <tbody>
-                @foreach($topOutlets as $o)
-                <tr style="border-bottom: 1px solid var(--border);">
-                    <td style="padding: 0.75rem 0.5rem;"><strong style="color: var(--text-primary); font-size: 0.85rem;">{{ $o->name }}</strong></td>
-                    <td style="padding: 0.75rem 0.5rem; text-align: right; font-weight: 700; color: #f59e0b;">Rp {{ number_format($o->value, 0, ',', '.') }}</td>
-                </tr>
-                @endforeach
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Salesman Breakdown -->
-<div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border);">
-    <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1.2rem; color: #10b981;">💼 Salesman Force (Kontribusi Merek)</h3>
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
-        @foreach($topSalesmen as $s)
-        <div style="background: var(--bg-primary); padding: 1rem; border-radius: 12px; border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-            <div style="font-weight: 600; color: var(--text-primary);">{{ $s->name ?: 'Tanpa Nama' }}</div>
-            <div style="color: #10b981; font-weight: 700;">Rp {{ number_format($s->value / 1000000, 1) }}jt</div>
-        </div>
+        <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1.2rem; color: #10b981;">💼 Kontribusi Sales Force</h3>
+        @foreach($topSalesmen->take(10) as $s)
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: 8px;">
+                <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">{{ $s->name ?: 'Tanpa Nama' }}</div>
+                <div style="font-size: 0.8rem; color: #10b981; font-weight: 700;">Rp {{ number_format($s->value/1000000, 1) }}jt</div>
+            </div>
         @endforeach
     </div>
 </div>
@@ -110,51 +147,55 @@
 </div>
 @endif
 
-@if($summary)
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        const ctxTrend = document.getElementById('trendChart').getContext('2d');
-        new Chart(ctxTrend, {
+        @if($summary)
+        // Trend Chart
+        new Chart(document.getElementById('trendChart').getContext('2d'), {
             type: 'line',
             data: {
                 labels: {!! json_encode($trend->pluck('week_start')->map(fn($d) => date('d M', strtotime($d)))->toArray()) !!},
                 datasets: [{
-                    label: 'Omzet Mingguan',
+                    label: 'Omzet',
                     data: {!! json_encode($trend->pluck('total')->toArray()) !!},
                     borderColor: '#6366f1',
                     backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 4,
-                    pointBackgroundColor: '#6366f1'
+                    borderWidth: 3, fill: true, tension: 0.4
                 }]
             },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false }
-                },
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
                 scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { 
-                            color: '#8888a0',
-                            callback: value => 'Rp ' + (value/1000000).toFixed(1) + 'jt'
-                        }
-                    },
-                    x: {
-                        grid: { display: false },
-                        ticks: { color: '#8888a0' }
-                    }
+                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8888a0', callback: v => 'Rp ' + (v/1000000).toFixed(0) + 'jt' } },
+                    x: { grid: { display: false }, ticks: { color: '#8888a0' } }
                 }
             }
         });
+
+        // City Chart
+        new Chart(document.getElementById('cityChart').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: {!! json_encode($cityAnalysis->pluck('city')->map(fn($c) => ucfirst(strtolower($c)))->toArray()) !!},
+                datasets: [{
+                    data: {!! json_encode($cityAnalysis->pluck('value')->toArray()) !!},
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8888a0', callback: v => (v/1000000).toFixed(0) + 'jt' } },
+                    y: { grid: { display: false }, ticks: { color: '#8888a0', font: { size: 10 } } }
+                }
+            }
+        });
+        @endif
     });
 </script>
-@endif
-
 @endsection

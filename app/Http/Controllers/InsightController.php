@@ -502,14 +502,28 @@ class InsightController extends Controller
             ]);
         }
 
+        // Find the Principle ID for the selected name to unify variants (e.g. Fortuna vs Fritolay)
+        $principleId = Transaction::where('transaction_date', '>=', $cutoff)
+            ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) = ?', [$selectedPrinciple])
+            ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_id")) as pid'))
+            ->value('pid');
+
         // 1. Summary Metrics
         $queryBase = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-            ->where('transactions.transaction_date', '>=', $cutoff)
-            ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+            ->where('transactions.transaction_date', '>=', $cutoff);
+        
+        if ($principleId) {
+            $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
+        } else {
+            $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+        }
+        
         $this->applyBranchFilter($queryBase, $branch);
 
         $summary = (clone $queryBase)->select(
-            DB::raw('SUM(sales.total) as total_value'),
+            DB::raw('SUM(CASE WHEN sales.total > 0 THEN sales.total ELSE 0 END) as gross_value'),
+            DB::raw('ABS(SUM(CASE WHEN sales.total < 0 THEN sales.total ELSE 0 END)) as return_value'),
+            DB::raw('SUM(sales.total) as net_value'),
             DB::raw('SUM(sales.qty) as total_qty'),
             DB::raw('COUNT(DISTINCT transactions.outlet_id) as total_outlets')
         )->first();
@@ -538,6 +552,48 @@ class InsightController extends Controller
             ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.sales_name")) as name'), DB::raw('SUM(sales.total) as value'))
             ->groupBy('name')->orderByDesc('value')->get();
 
+        // 6. City Analysis
+        $cityAnalysis = (clone $queryBase)->join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
+            ->select('outlets.city', DB::raw('SUM(sales.total) as value'))
+            ->whereNotNull('outlets.city')
+            ->groupBy('outlets.city')->orderByDesc('value')->get();
+
+        // 7. Growth (Current 30 vs Prev 30)
+        $d30 = Carbon::parse($cutoff)->addDays(60); // Roughly 30 days from now back to 60 days ago
+        $now = Carbon::parse($cutoff)->addDays(90);
+        $d60 = Carbon::parse($cutoff)->addDays(30);
+
+        $curr30 = (clone $queryBase)->whereBetween('transactions.transaction_date', [$d30->toDateString(), $now->toDateString()])->sum('sales.total');
+        $prev30 = (clone $queryBase)->whereBetween('transactions.transaction_date', [$d60->toDateString(), $d30->subDay()->toDateString()])->sum('sales.total');
+        $growth30 = ($prev30 > 0) ? (($curr30 - $prev30) / $prev30) * 100 : (($curr30 > 0) ? 0 : 0); // Reset growth if no previous data
+
+        // 8. Sleeper Outlets (Top Brand Customers missing for 14+ days)
+        $rfmNow = Carbon::parse($now);
+        $lastOrders = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
+            ->select('transactions.outlet_id', DB::raw('MAX(transactions.transaction_date) as last_date'), DB::raw('SUM(sales.total) as total_contribution'))
+            ->groupBy('transactions.outlet_id')
+            ->orderByDesc('total_contribution')->limit(50)->get();
+        
+        $sleepers = $lastOrders->filter(function($o) use ($rfmNow) {
+            return Carbon::parse($o->last_date)->diffInDays($rfmNow) > 14;
+        })->take(5);
+        if ($sleepers->count() > 0) {
+            $sleeperIds = $sleepers->pluck('outlet_id')->toArray();
+            $sleeperDetails = Outlet::whereIn('id', $sleeperIds)->get()->keyBy('id');
+            foreach($sleepers as $s) {
+                $s->name = $sleeperDetails[$s->outlet_id]->name ?? 'Unknown';
+                $s->days = Carbon::parse($s->last_date)->diffInDays($rfmNow);
+            }
+        }
+
+        // 9. Product Return Audit
+        $returns = (clone $queryBase)->join('products', 'sales.product_id', '=', 'products.id')
+            ->where('sales.total', '<', 0)
+            ->select('products.name', DB::raw('ABS(SUM(sales.total)) as value'), DB::raw('ABS(SUM(sales.qty)) as qty'))
+            ->groupBy('products.id', 'products.name')
+            ->orderByDesc('value')->limit(5)->get();
+
         return view('insights.principal-report', [
             'principles' => $principles,
             'selected_principle' => $selectedPrinciple,
@@ -546,7 +602,12 @@ class InsightController extends Controller
             'trend' => $trend,
             'topProducts' => $topProducts,
             'topOutlets' => $topOutlets,
-            'topSalesmen' => $topSalesmen
+            'topSalesmen' => $topSalesmen,
+            'cityAnalysis' => $cityAnalysis,
+            'growth30' => round($growth30, 1),
+            'curr30' => $curr30,
+            'sleepers' => $sleepers,
+            'returns' => $returns
         ]);
     }
 
