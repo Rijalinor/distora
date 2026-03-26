@@ -159,6 +159,15 @@
         <div class="pillar-desc">Deteksi dini kecurangan atau masalah kualitas barang lewat pola retur salesman.</div>
         <div class="pillar-stat" style="color: var(--warning); background: rgba(245, 158, 11, 0.1);">⚠️ {{ $data['summary']['anomalies'] }} Kasus Waspada</div>
     </a>
+
+    <!-- Pillar 9: Principal Intelligence -->
+    <a href="{{ route('insights.principal-report', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid #3b82f6;">
+        <div class="pillar-icon">🏪</div>
+        <div class="pillar-title">Laporan Detail Prinsipel</div>
+        <div class="pillar-desc">Deep-dive performa per brand. Cek tren, produk terlaris, dan outlet terloyal khusus untuk prinsipel pilihan.</div>
+        <div class="pillar-stat" style="color: #3b82f6; background: rgba(59, 130, 246, 0.1);">📊 Intelligence Per Brand</div>
+    </a>
 </div>
+
 
 @endsection

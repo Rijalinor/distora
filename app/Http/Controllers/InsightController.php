@@ -481,7 +481,77 @@ class InsightController extends Controller
         ]);
     }
 
+    public function principalReport(Request $request)
+    {
+        $branch = $this->getBranchFilter($request);
+        $cutoff = $this->getCutoffDate();
+        
+        // Fetch all possible principles for the dropdown
+        $principles = Transaction::where('transaction_date', '>=', $cutoff)
+            ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) as name'))
+            ->distinct()->pluck('name')->filter(fn($n) => !empty($n) && $n !== 'Principle Name')->sort()->values();
+
+        $selectedPrinciple = $request->query('principle', $principles[0] ?? null);
+
+        if (!$selectedPrinciple) {
+            return view('insights.principal-report', [
+                'data' => null,
+                'principles' => $principles,
+                'selected_branch' => $branch,
+                'selected_principle' => null
+            ]);
+        }
+
+        // 1. Summary Metrics
+        $queryBase = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            ->where('transactions.transaction_date', '>=', $cutoff)
+            ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+        $this->applyBranchFilter($queryBase, $branch);
+
+        $summary = (clone $queryBase)->select(
+            DB::raw('SUM(sales.total) as total_value'),
+            DB::raw('SUM(sales.qty) as total_qty'),
+            DB::raw('COUNT(DISTINCT transactions.outlet_id) as total_outlets')
+        )->first();
+
+        // 2. Trend (Weekly)
+        $trend = (clone $queryBase)->select(
+            DB::raw('DATE_FORMAT(transactions.transaction_date, "%Y-%u") as week'),
+            DB::raw('MIN(transactions.transaction_date) as week_start'),
+            DB::raw('SUM(sales.total) as total')
+        )->groupBy('week')->orderBy('week')->get();
+
+        // 3. Top Products
+        $topProducts = (clone $queryBase)->join('products', 'sales.product_id', '=', 'products.id')
+            ->select('products.name', DB::raw('SUM(sales.total) as value'), DB::raw('SUM(sales.qty) as qty'))
+            ->groupBy('products.id', 'products.name')
+            ->orderByDesc('value')->limit(10)->get();
+
+        // 4. Top Outlets
+        $topOutlets = (clone $queryBase)->join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
+            ->select('outlets.name', DB::raw('SUM(sales.total) as value'))
+            ->groupBy('outlets.id', 'outlets.name')
+            ->orderByDesc('value')->limit(10)->get();
+
+        // 5. Salesman Performance
+        $topSalesmen = (clone $queryBase)
+            ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.sales_name")) as name'), DB::raw('SUM(sales.total) as value'))
+            ->groupBy('name')->orderByDesc('value')->get();
+
+        return view('insights.principal-report', [
+            'principles' => $principles,
+            'selected_principle' => $selectedPrinciple,
+            'selected_branch' => $branch,
+            'summary' => $summary,
+            'trend' => $trend,
+            'topProducts' => $topProducts,
+            'topOutlets' => $topOutlets,
+            'topSalesmen' => $topSalesmen
+        ]);
+    }
+
     // --- PILLAR 8: GUIDE ---
+
     public function guide()
     {
         return view('insights.guide');

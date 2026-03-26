@@ -47,7 +47,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/anomalies', [InsightController::class, 'anomalies'])->name('insights.anomalies');
         Route::get('/stock-forecast', [InsightController::class, 'stockForecast'])->name('insights.stock-forecast');
         Route::get('/purchase-order', [InsightController::class, 'purchaseOrder'])->name('insights.purchase-order');
+        Route::get('/principal-report', [InsightController::class, 'principalReport'])->name('insights.principal-report');
         Route::get('/dead-stock', [InsightController::class, 'deadStock'])->name('insights.dead-stock');
+
         Route::get('/growth', [InsightController::class, 'growth'])->name('insights.growth');
         Route::get('/guide', [InsightController::class, 'guide'])->name('insights.guide');
     });
