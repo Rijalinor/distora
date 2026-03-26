@@ -247,8 +247,8 @@ class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, 
     protected function buildTransactionMeta(array $data): array
     {
         return [
-            'dist_id' => $this->value($data, 'dist_id'),
-            'dist_name' => $this->value($data, 'dist_name'),
+            'dist_id' => $this->value($data, 'dist_id') ?? $this->value($data, 'branch'),
+            'dist_name' => $this->value($data, 'dist_name') ?? $this->value($data, 'branch_name'),
             'pfi_created_date' => $this->value($data, 'pfi_created_date'),
             'pfi_no' => $this->value($data, 'pfi_no'),
             'so_created_date' => $this->value($data, 'so_created_date'),

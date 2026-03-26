@@ -127,6 +127,9 @@
                                     @if(in_array($h->status, ['failed', 'partial']))
                                         <button class="btn btn-primary btn-sm" onclick="retryUpload({{ $h->id }})">Retry</button>
                                     @endif
+                                    <button class="btn btn-sm" style="background: var(--danger, #ef4444); color: white; border: none; padding: 0.25rem 0.5rem; border-radius: 0.375rem; cursor: pointer;" onclick="deleteUpload({{ $h->id }})" title="Hapus">
+                                        🗑️
+                                    </button>
                                 </div>
                             </td>
                         </tr>
@@ -179,7 +182,9 @@
         progressBar.style.width = '0%';
 
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/imports/sales');
+        xhr.open('POST', '/imports/sales');
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('meta[name="csrf-token"]').content);
 
         xhr.upload.addEventListener('progress', (e) => {
             if (e.lengthComputable) {
@@ -218,16 +223,38 @@
 
     function retryUpload(id) {
         if (!confirm('Retry import ini? Data lama akan dihapus dan diproses ulang.')) return;
-        fetch('/api/imports/sales/' + id + '/retry', {
+        fetch('/imports/sales/' + id + '/retry', {
             method: 'POST',
-            headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
+            headers: { 
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
         })
         .then(r => r.json())
         .then(data => {
-            showToast(data.message, 'success');
+            showToast(data.message || 'Berhasil di-retry.', 'success');
             setTimeout(() => location.reload(), 1500);
         })
         .catch(() => showToast('Retry gagal.', 'error'));
+    }
+
+    function deleteUpload(id) {
+        if (!confirm('Hapus import ini? Semua data transaksi, penjualan, dan stok terkait akan dihapus secara permanen.')) return;
+        fetch('/imports/sales/' + id, {
+            method: 'DELETE',
+            headers: { 
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(r => r.json())
+        .then(data => {
+            showToast(data.message || 'File berhasil dihapus.', 'success');
+            setTimeout(() => location.reload(), 1500);
+        })
+        .catch(() => showToast('Gagal menghapus file.', 'error'));
     }
 </script>
 @endpush

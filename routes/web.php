@@ -6,8 +6,10 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ExportController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ResetController;
+use App\Http\Controllers\SalesImportController;
 use App\Http\Controllers\TargetController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\InsightController;
 use Illuminate\Support\Facades\Route;
 
 // Authentication Routes
@@ -20,6 +22,16 @@ Route::middleware('auth')->group(function () {
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/upload/{uploadHistory}', [DashboardController::class, 'show'])->name('dashboard.show');
 
+    // Imports
+    Route::prefix('imports/sales')->group(function () {
+        Route::get('/', [SalesImportController::class, 'index']);
+        Route::post('/', [SalesImportController::class, 'store']);
+        Route::get('/{uploadHistory}', [SalesImportController::class, 'show']);
+        Route::get('/{uploadHistory}/logs', [SalesImportController::class, 'logs']);
+        Route::post('/{uploadHistory}/retry', [SalesImportController::class, 'retry']);
+        Route::delete('/{uploadHistory}', [SalesImportController::class, 'destroy']);
+    });
+
     // Tutup Buku (Period Closing)
     Route::get('/reset', [ResetController::class, 'index'])->name('reset.index');
     Route::post('/reset', [ResetController::class, 'execute'])->name('reset.execute');
@@ -27,6 +39,18 @@ Route::middleware('auth')->group(function () {
 
     // Analytics & Export
     Route::get('/analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
+    Route::prefix('insights')->group(function () {
+        Route::get('/', [InsightController::class, 'index'])->name('insights.index');
+        Route::get('/rfm', [InsightController::class, 'rfm'])->name('insights.rfm');
+        Route::get('/bundling', [InsightController::class, 'bundling'])->name('insights.bundling');
+        Route::get('/discounts', [InsightController::class, 'discounts'])->name('insights.discounts');
+        Route::get('/anomalies', [InsightController::class, 'anomalies'])->name('insights.anomalies');
+        Route::get('/stock-forecast', [InsightController::class, 'stockForecast'])->name('insights.stock-forecast');
+        Route::get('/purchase-order', [InsightController::class, 'purchaseOrder'])->name('insights.purchase-order');
+        Route::get('/dead-stock', [InsightController::class, 'deadStock'])->name('insights.dead-stock');
+        Route::get('/growth', [InsightController::class, 'growth'])->name('insights.growth');
+        Route::get('/guide', [InsightController::class, 'guide'])->name('insights.guide');
+    });
     Route::get('/export/{type}', [ExportController::class, 'export'])->name('export.download');
 
     // Target (KPI)

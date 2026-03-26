@@ -10,10 +10,18 @@ use Illuminate\Support\Facades\DB;
 
 class AnalyticsController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
+        $branch = $request->query('branch', 'all');
+
+        $applyBranchFilter = function($query, $transactionAlias = 'transactions') use ($branch) {
+            if ($branch !== 'all') {
+                $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT({$transactionAlias}.meta, '$.dist_id')) = ?", [$branch]);
+            }
+        };
+
         // 1. Sales Trend (last 30 days)
-        $salesTrend = Transaction::query()
+        $salesTrendQuery = Transaction::query()
             ->join('sales', 'transactions.id', '=', 'sales.transaction_id')
             ->where('sales.total', '>', 0)
             ->select(
@@ -24,13 +32,14 @@ class AnalyticsController extends Controller
             )
             ->groupBy('date')
             ->orderBy('date')
-            ->limit(60)
-            ->get();
+            ->limit(60);
+        $applyBranchFilter($salesTrendQuery);
+        $salesTrend = $salesTrendQuery->get();
 
         // 2. Top 10 Products (for bar chart)
-        $topProducts = Sale::query()
+        $topProductsQuery = Sale::query()
             ->join('products', 'sales.product_id', '=', 'products.id')
-            ->where('sales.total', '>', 0)
+            ->join('transactions', 'sales.transaction_id', '=', 'transactions.id')
             ->select(
                 'products.name',
                 DB::raw('SUM(sales.total) as total'),
@@ -38,34 +47,35 @@ class AnalyticsController extends Controller
             )
             ->groupBy('products.id', 'products.name')
             ->orderByDesc('total')
-            ->limit(10)
-            ->get();
+            ->limit(10);
+        $applyBranchFilter($topProductsQuery);
+        $topProducts = $topProductsQuery->get();
 
         // 3. Sales by Principle (for donut chart)
-        $byPrinciple = Transaction::query()
+        $byPrincipleQuery = Transaction::query()
             ->join('sales', 'transactions.id', '=', 'sales.transaction_id')
-            ->where('sales.total', '>', 0)
             ->whereNotNull('transactions.meta')
             ->select(
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle"),
                 DB::raw('SUM(sales.total) as total')
             )
             ->groupBy('principle')
-            ->orderByDesc('total')
-            ->get()
-            ->filter(fn($r) => $r->principle);
+            ->orderByDesc('total');
+        $applyBranchFilter($byPrincipleQuery);
+        $byPrinciple = $byPrincipleQuery->get()->filter(fn($r) => $r->principle);
 
         // 4. Pareto Analysis (80/20)
-        $allProducts = Sale::query()
+        $allProductsQuery = Sale::query()
             ->join('products', 'sales.product_id', '=', 'products.id')
-            ->where('sales.total', '>', 0)
+            ->join('transactions', 'sales.transaction_id', '=', 'transactions.id')
             ->select(
                 'products.name',
                 DB::raw('SUM(sales.total) as total')
             )
             ->groupBy('products.id', 'products.name')
-            ->orderByDesc('total')
-            ->get();
+            ->orderByDesc('total');
+        $applyBranchFilter($allProductsQuery);
+        $allProducts = $allProductsQuery->get();
 
         $grandTotal = $allProducts->sum('total') ?: 1;
         $cumulative = 0;
@@ -88,9 +98,8 @@ class AnalyticsController extends Controller
         
         $paretoChartData = array_slice($paretoData, 0, 50); // Top 50 for the chart
 
-
         // 5. Gross vs Net trend
-        $grossNetTrend = Transaction::query()
+        $grossNetTrendQuery = Transaction::query()
             ->join('sales', 'transactions.id', '=', 'sales.transaction_id')
             ->where('sales.total', '>', 0)
             ->select(
@@ -100,26 +109,53 @@ class AnalyticsController extends Controller
             )
             ->groupBy('date')
             ->orderBy('date')
-            ->limit(30)
-            ->get();
+            ->limit(30);
+        $applyBranchFilter($grossNetTrendQuery);
+        $grossNetTrend = $grossNetTrendQuery->get();
 
         // 6. Stock summary per branch
+        $stockMap = ['OBM_01' => 'Banjarmasin', 'OBM_02' => 'Barabai', 'OBM_03' => 'Batulicin'];
         $latestUploadId = Stock::max('upload_history_id');
-        $stockByBranch = Stock::where('upload_history_id', $latestUploadId)
+        $stockQuery = Stock::where('upload_history_id', $latestUploadId)
             ->select(
                 'branch',
                 DB::raw('SUM(stock_value_on_hand) as value'),
                 DB::raw('COUNT(*) as items')
             )
-            ->groupBy('branch')
-            ->get();
+            ->groupBy('branch');
+        if ($branch !== 'all' && isset($stockMap[$branch])) {
+            $stockQuery->where('branch', 'like', '%' . $stockMap[$branch] . '%');
+        }
+        $stockByBranch = $stockQuery->get();
 
         // 7. Summary cards
+        // Total Sales (Gross Sales only)
+        $totalSalesQuery = Sale::where('sales.total', '>', 0)
+                            ->join('transactions', 'sales.transaction_id', '=', 'transactions.id');
+        $applyBranchFilter($totalSalesQuery);
+        $totalSales = $totalSalesQuery->sum('sales.total');
+
+        // Net Sales (Gross - Returns)
+        $netSalesQuery = Sale::join('transactions', 'sales.transaction_id', '=', 'transactions.id');
+        $applyBranchFilter($netSalesQuery);
+        $netSales = $netSalesQuery->sum('sales.total');
+
+        $totalReturnsQuery = Sale::where('sales.total', '<', 0)
+                            ->join('transactions', 'sales.transaction_id', '=', 'transactions.id');
+        $applyBranchFilter($totalReturnsQuery);
+        $totalReturns = abs($totalReturnsQuery->sum('sales.total'));
+
+        $totalTransactionsQuery = Transaction::query();
+        $applyBranchFilter($totalTransactionsQuery);
+        $totalTransactions = $totalTransactionsQuery->count();
+
         $summary = [
-            'total_sales' => Sale::where('total', '>', 0)->sum('total'),
-            'total_returns' => abs(Sale::where('total', '<', 0)->sum('total')),
-            'total_transactions' => Transaction::count(),
+            'total_sales' => $totalSales,
+            'net_sales' => $netSales,
+            'total_returns' => $totalReturns,
+            'total_transactions' => $totalTransactions,
             'avg_daily_sales' => $salesTrend->count() > 0 ? $salesTrend->avg('total') : 0,
+            'selected_branch' => $branch,
         ];
 
         return view('analytics.index', compact(

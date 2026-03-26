@@ -332,6 +332,7 @@
                     @if(auth()->user()->role === 'admin')
                         <a href="{{ route('dashboard') }}" class="{{ request()->routeIs('dashboard*') ? 'active' : '' }}">Dashboard</a>
                         <a href="{{ route('analytics.index') }}" class="{{ request()->routeIs('analytics.*') ? 'active' : '' }}">📈 Analytics</a>
+                        <a href="{{ route('insights.index') }}" class="{{ request()->routeIs('insights.*') ? 'active' : '' }}">💡 Keputusan</a>
                         <a href="{{ route('targets.index') }}" class="{{ request()->routeIs('targets.*') ? 'active' : '' }}">🎯 Target KPI</a>
                         <a href="{{ route('reports.sales-summary') }}" class="{{ request()->routeIs('reports.*') ? 'active' : '' }}">📊 Laporan</a>
                         <a href="{{ route('reset.index') }}" class="{{ request()->routeIs('reset.*') ? 'active' : '' }}" style="color: {{ request()->routeIs('reset.*') ? 'var(--warning)' : '' }}">📒 Tutup Buku</a>

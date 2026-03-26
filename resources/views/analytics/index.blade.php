@@ -7,10 +7,24 @@
             <h1 style="font-size: 1.5rem; font-weight: 700;">📈 Analytics & Visualisasi</h1>
             <p style="color: var(--text-muted); font-size: 0.95rem;">Insight mendalam tentang performa bisnis</p>
         </div>
+        <div>
+            <form id="branchFilterForm" action="{{ route('analytics.index') }}" method="GET">
+                <select name="branch" onchange="document.getElementById('branchFilterForm').submit()" style="padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-weight: 500; cursor: pointer; outline: none;">
+                    <option value="all" {{ request('branch') == 'all' ? 'selected' : '' }}>Semua Cabang</option>
+                    <option value="OBM_01" {{ request('branch') == 'OBM_01' ? 'selected' : '' }}>📌 Banjarmasin (OBM_01)</option>
+                    <option value="OBM_02" {{ request('branch') == 'OBM_02' ? 'selected' : '' }}>📌 Barabai (OBM_02)</option>
+                    <option value="OBM_03" {{ request('branch') == 'OBM_03' ? 'selected' : '' }}>📌 Batulicin (OBM_03)</option>
+                </select>
+            </form>
+        </div>
     </div>
 
     <!-- Summary KPI -->
     <div class="stats-grid" style="margin-bottom: 2rem;">
+        <div class="stat-card">
+            <div class="stat-label">Pendapatan Bersih</div>
+            <div class="stat-value" style="color: #6366f1;">Rp {{ number_format($summary['net_sales'], 0, ',', '.') }}</div>
+        </div>
         <div class="stat-card">
             <div class="stat-label">Total Penjualan</div>
             <div class="stat-value text-success">Rp {{ number_format($summary['total_sales'], 0, ',', '.') }}</div>

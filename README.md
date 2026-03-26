@@ -22,6 +22,15 @@
 - 📉 **Comprehensive Reports & Analytics**: 12+ format laporan siap pakai menggunakan Chart.js (Summary Omzet, Top Sales, Slow Moving, Retur, dll).
 - 📅 **Sistem Tutup Buku**: Manajemen *Period* yang mengamankan integritas data bulanan agar laporan tidak tumpang tindih.
 - ✉️ **Automated Daily Email Recap**: Robot yang mengirimkan performa tutup harian (Omzet, Top Produk, dan Target Achievers) langsung ke email Admin/Manager setiap jam 5 sore.
+- 💡 **Pusat Kendali Keputusan (DSS)**: 8 Pilar intelijen bisnis untuk membantu Supervisor mengambil keputusan cepat:
+    1. **RFM**: Segmentasi Outlet (Sultan/Sleeper).
+    2. **Bundling**: Rekomendasi pasangan produk laku.
+    3. **Stok Kritis**: Pantau barang habis dlm 1-3 hari.
+    4. **Order Pabrik**: Simulasi belanja otomatis ke pabrik dg hitungan **Karton (Ctn)** & Export Excel.
+    5. **Stok Mati**: Identifikasi aset modal macet.
+    6. **Growth**: Tren omzet mingguan per pabrikan.
+    7. **Diskon**: Evaluasi rasio promo vs profit.
+    8. **Audit**: Deteksi anomali/kecurangan retur.
 
 ---
 
@@ -110,8 +119,34 @@ Untuk mengaktifkannya:
 1. Setel *SMTP* di file `.env` kamu (contoh `MAIL_MAILER=smtp`, dst).
 2. Jika jalan di server sungguhan (Linux/CPanel), tambahkan perintah ini di Cron Job server:
    `* * * * * cd /path-ke-folder-distora && php artisan schedule:run >> /dev/null 2>&1`
-3. Jika dijalankan di Windows/XAMPP untuk testing lokal, buka 1 tab terminal khusus dan ketik:
    `php artisan schedule:work`
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+Sistem ini dilengkapi dengan unit dan feature testing bawaan Laravel untuk menjaga stabilitas kode.
+
+### Cara Menjalankan Test:
+Untuk memastikan fitur Dashboard dan DSS berjalan normal setelah melakukan perubahan kode, jalankan:
+```bash
+php artisan test
+```
+
+### Penting untuk Pemeliharaan:
+- **Data 90 Hari**: Seluruh pilar "Pusat Kendali" menggunakan limitasi data 90 hari terakhir untuk kecepatan dan relevansi.
+- **Mapping Stok**: Pastikan kode cabang di file Excel (`bjm`, `brb`, `btl`) tidak berubah agar sistem *mapping* otomatis di `InsightController` tetap sinkron dengan ID transaksi (`OBM_01`, dst).
+
+---
+
+## 🛠️ Git Workflow (Pemeliharaan)
+
+Gunakan perintah standar Git untuk melakukan update:
+```bash
+git add .
+git commit -m "Update Fitur: Pusat Kendali Keputusan 8-Pilar & Excel Export"
+git push origin main
+```
 
 ---
 
