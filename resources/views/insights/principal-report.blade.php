@@ -69,9 +69,9 @@
     </div>
     <!-- Growth -->
     <div style="background: var(--bg-card); padding: 1.2rem; border-radius: 16px; border: 1px solid var(--border); border-top: 4px solid #3b82f6;">
-        <div style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Growth (30 Hari)</div>
-        <div style="font-size: 1.2rem; font-weight: 800; color: {{ $growth30 >= 0 ? '#10b981' : '#ef4444' }};">
-            {!! $growth30 >= 0 ? '↑' : '↓' !!} {{ abs($growth30) }}%
+        <div style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-bottom: 0.5rem;">Growth (3 Bulan)</div>
+        <div style="font-size: 1.2rem; font-weight: 800; color: {{ $growth3m >= 0 ? '#10b981' : '#ef4444' }};">
+            {!! $growth3m >= 0 ? '↑' : '↓' !!} {{ abs($growth3m) }}%
         </div>
     </div>
     <!-- Coverage -->

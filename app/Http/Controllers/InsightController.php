@@ -656,7 +656,7 @@ class InsightController extends Controller
             ]);
         }
 
-        $reportData = $this->cachedResult('principal_report_v6', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles) {
+        $reportData = $this->cachedResult('principal_report_v7', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles) {
             // Find the Principle ID for the selected name
             $principleId = Transaction::join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
                 ->whereIn('upload_histories.period_id', $periodIds)
@@ -715,20 +715,25 @@ class InsightController extends Controller
                 ->whereNotNull('outlets.city')
                 ->groupBy('outlets.city')->orderByDesc('value')->get();
 
-            // 7. Growth (Current Month vs Last Month)
-            $prevPeriod = \App\Models\Period::where('year', ($activePeriod->month == 1 ? $activePeriod->year - 1 : $activePeriod->year))
-                ->where('month', ($activePeriod->month == 1 ? 12 : $activePeriod->month - 1))
-                ->first();
+            // 7. Growth (Current 3 Months vs Previous 3 Months)
+            $earliestPeriod = \App\Models\Period::whereIn('id', $periodIds)->orderBy('year')->orderBy('month')->first();
+            $prev3PeriodIds = $earliestPeriod ? $earliestPeriod->getPrecedingIds(3) : [];
             
             $currVal = $summary->net_value ?? 0;
             $prevVal = 0;
-            if ($prevPeriod) {
-                // Use period_id for previous month's sales
-                $prevVal = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            if (count($prev3PeriodIds) > 0) {
+                $prevValQuery = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
                     ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
-                    ->where('upload_histories.period_id', $prevPeriod->id)
-                    ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
-                    ->sum('sales.total');
+                    ->whereIn('upload_histories.period_id', $prev3PeriodIds);
+
+                if ($principleId) {
+                    $prevValQuery->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
+                } else {
+                    $prevValQuery->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+                }
+
+                $this->applyBranchFilter($prevValQuery, $branch);
+                $prevVal = $prevValQuery->sum('sales.total');
             }
 
             $growthVal = ($prevVal > 0) ? (($currVal - $prevVal) / $prevVal) * 100 : (($currVal > 0) ? 100 : 0);
@@ -775,8 +780,7 @@ class InsightController extends Controller
             'topOutlets' => $reportData['topOutlets'],
             'topSalesmen' => $reportData['topSalesmen'],
             'cityAnalysis' => $reportData['cityAnalysis'],
-            'growth30' => round($reportData['growthVal'], 1),
-            'curr30' => $reportData['currVal'],
+            'growth3m' => round($reportData['growthVal'], 1),
             'sleepers' => $reportData['sleepers'],
             'returns' => $reportData['returns'],
             'activePeriod' => $activePeriod,
