@@ -656,7 +656,7 @@ class InsightController extends Controller
             ]);
         }
 
-        $reportData = $this->cachedResult('principal_report_v8', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles, $principleId) {
+        $reportData = $this->cachedResult('principal_report_v8', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles) {
             // Find the Principle ID for the selected name
             $principleId = Transaction::join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
                 ->whereIn('upload_histories.period_id', $periodIds)
