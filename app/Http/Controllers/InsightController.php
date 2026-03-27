@@ -194,18 +194,19 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $activePeriod = $this->getSelectedPeriod($request);
-        [$startDate, $endDate] = $this->get3MonthRange($activePeriod);
+        $periodIds = $this->get3MonthRange($activePeriod);
 
-        $bundling = $this->cachedResult('bundling_3m', $activePeriod, function() use ($branch, $startDate, $endDate) {
+        $bundling = $this->cachedResult('bundling_v6', $activePeriod, function() use ($branch, $periodIds) {
             $query = DB::table('sales as s1')
                 ->join('sales as s2', 's1.transaction_id', '=', 's2.transaction_id')
                 ->join('transactions', 's1.transaction_id', '=', 'transactions.id')
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
                 ->join('products as p1', 's1.product_id', '=', 'p1.id')
                 ->join('products as p2', 's2.product_id', '=', 'p2.id')
                 ->where('s1.product_id', '<', 's2.product_id')
                 ->where('s1.total', '>', 0)
                 ->where('s2.total', '>', 0)
-                ->whereBetween('transactions.transaction_date', [$startDate, $endDate]);
+                ->whereIn('upload_histories.period_id', $periodIds);
 
             $this->applyBranchFilter($query, $branch);
 
@@ -277,7 +278,7 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $activePeriod = $this->getSelectedPeriod($request);
-        $anomalies = $this->cachedResult('anomalies', $activePeriod, function() use ($branch, $activePeriod) {
+        $anomalies = $this->cachedResult('anomalies_v6', $activePeriod, function() use ($branch, $activePeriod) {
             return $this->getAnomaliesData($branch, $activePeriod);
         });
 
@@ -289,24 +290,26 @@ class InsightController extends Controller
         ]);
     }
 
-    private function getAnomaliesData($branch, $period)
+    private function getAnomaliesData($branch, $period = null)
     {
-        [$startDate, $endDate] = $period->getRange();
-        $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-            ->whereNotNull('transactions.meta')
-            ->whereBetween('transactions.transaction_date', [$startDate, $endDate])
-            ->select(
+        $period = $period ?? $this->getSelectedPeriod(request());
+        $precedingIds = $period->getPrecedingIds(3);
 
+        $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->whereIn('upload_histories.period_id', $precedingIds)
+            ->whereNotNull('transactions.meta')
+            ->select(
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.sales_name')) as salesman"),
-                DB::raw('SUM(CASE WHEN sales.total > 0 THEN sales.total ELSE 0 END) as gross_sales'),
+                DB::raw('SUM(CASE WHEN sales.total > 0 THEN sales.total ELSE 0 END) as gross_value'),
                 DB::raw('ABS(SUM(CASE WHEN sales.total < 0 THEN sales.total ELSE 0 END)) as return_value')
             )
             ->groupBy('salesman')
-            ->having('gross_sales', '>', 0);
+            ->having('gross_value', '>', 0);
         
         $this->applyBranchFilter($query, $branch);
         return $query->get()->filter(fn($r) => $r->salesman)->map(function($item) {
-            $item->return_rate = ($item->return_value / ($item->gross_sales ?: 1)) * 100;
+            $item->return_rate = ($item->return_value / ($item->gross_value ?: 1)) * 100;
             return $item;
         })->filter(function($item) {
             return $item->return_rate > 2;
@@ -329,7 +332,7 @@ class InsightController extends Controller
             ->sort()
             ->values();
 
-        $stockAlerts = $this->cachedResult('stock_forecast', $activePeriod, function() use ($branch, $principle, $activePeriod) {
+        $stockAlerts = $this->cachedResult('stock_forecast_v6', $activePeriod, function() use ($branch, $principle, $activePeriod) {
             return $this->getStockForecastData($branch, $principle, $activePeriod);
         });
 
@@ -346,12 +349,13 @@ class InsightController extends Controller
     private function getStockForecastData($branch, $principle = 'all', $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        [$startDate, $endDate] = $period->getRange();
-        $cutoff = $this->getCutoffDate($period);
+        $precedingIds = $period->getPrecedingIds(3);
+        if (count($precedingIds) < 3) return [];
 
         $query = Sale::join('products', 'sales.product_id', '=', 'products.id')
             ->join('transactions', 'sales.transaction_id', '=', 'transactions.id')
-            ->whereBetween('transactions.transaction_date', [$cutoff, $endDate])
+            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->whereIn('upload_histories.period_id', $precedingIds)
             ->select(
                 'products.id', 'products.name',
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle_name"),
@@ -630,11 +634,11 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $activePeriod = $this->getSelectedPeriod($request);
-        [$startDate, $endDate] = $this->get3MonthRange($activePeriod);
-        $cutoff = $this->getCutoffDate($activePeriod);
+        $periodIds = $this->get3MonthRange($activePeriod); // Assuming this method returns an array of period IDs
         
-        // Fetch all possible principles for the dropdown within the 90-day window
-        $principles = Transaction::whereBetween('transaction_date', [$startDate, $endDate])
+        // Fetch all possible principles for the dropdown within the 3-month window
+        $principles = Transaction::join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->whereIn('upload_histories.period_id', $periodIds)
             ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) as name'))
             ->distinct()->pluck('name')->filter(fn($n) => !empty($n) && $n !== 'Principle Name')->sort()->values();
 
@@ -643,6 +647,7 @@ class InsightController extends Controller
         if (!$selectedPrinciple) {
             return view('insights.principal-report', [
                 'data' => null,
+                'summary' => null, // Added for consistency
                 'principles' => $principles,
                 'selected_branch' => $branch,
                 'selected_principle' => null,
@@ -651,16 +656,18 @@ class InsightController extends Controller
             ]);
         }
 
-        $reportData = $this->cachedResult('principal_report', $activePeriod, function() use ($selectedPrinciple, $branch, $startDate, $endDate, $activePeriod, $cutoff, $principles) {
+        $reportData = $this->cachedResult('principal_report_v6', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles) {
             // Find the Principle ID for the selected name
-            $principleId = Transaction::whereBetween('transaction_date', [$startDate, $endDate])
+            $principleId = Transaction::join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                ->whereIn('upload_histories.period_id', $periodIds)
                 ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) = ?', [$selectedPrinciple])
                 ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_id")) as pid'))
                 ->value('pid');
 
             // 1. Summary Metrics
             $queryBase = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-                ->whereBetween('transactions.transaction_date', [$startDate, $endDate]);
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                ->whereIn('upload_histories.period_id', $periodIds);
             
             if ($principleId) {
                 $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
@@ -678,7 +685,7 @@ class InsightController extends Controller
                 DB::raw('COUNT(DISTINCT transactions.outlet_id) as total_outlets')
             )->first();
 
-            // 2. Trend (Weekly)
+            // 2. Trend (Weekly) - Using transaction_date for trend is okay
             $trend = (clone $queryBase)->select(
                 DB::raw('DATE_FORMAT(transactions.transaction_date, "%Y-%u") as week'),
                 DB::raw('MIN(transactions.transaction_date) as week_start'),
@@ -716,9 +723,10 @@ class InsightController extends Controller
             $currVal = $summary->net_value ?? 0;
             $prevVal = 0;
             if ($prevPeriod) {
-                [$pStart, $pEnd] = $prevPeriod->getRange();
+                // Use period_id for previous month's sales
                 $prevVal = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-                    ->whereBetween('transactions.transaction_date', [$pStart, $pEnd])
+                    ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                    ->where('upload_histories.period_id', $prevPeriod->id)
                     ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
                     ->sum('sales.total');
             }
@@ -726,16 +734,17 @@ class InsightController extends Controller
             $growthVal = ($prevVal > 0) ? (($currVal - $prevVal) / $prevVal) * 100 : (($currVal > 0) ? 100 : 0);
 
             // 8. Sleeper Outlets
-            $rfmNow = Carbon::parse($endDate);
+            $rfmNow = \Carbon\Carbon::now(); // Use current date for recency calculation
             $lastOrders = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                ->whereIn('upload_histories.period_id', $periodIds) // Filter by period IDs
                 ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
-                ->where('transactions.transaction_date', '<=', $endDate)
                 ->select('transactions.outlet_id', DB::raw('MAX(transactions.transaction_date) as last_date'), DB::raw('SUM(sales.total) as total_contribution'))
                 ->groupBy('transactions.outlet_id')
                 ->orderByDesc('total_contribution')->limit(50)->get();
             
             $sleepers = $lastOrders->filter(function($o) use ($rfmNow) {
-                return Carbon::parse($o->last_date)->diffInDays($rfmNow) > 14;
+                return \Carbon\Carbon::parse($o->last_date)->diffInDays($rfmNow) > 14;
             })->take(5);
             if ($sleepers->count() > 0) {
                 $sleeperIds = $sleepers->pluck('outlet_id')->toArray();
