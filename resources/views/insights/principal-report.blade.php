@@ -85,8 +85,13 @@
     <!-- Trends Section -->
     <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border);">
         <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">📈 Tren Penjualan Mingguan</h3>
-        <div style="height: 300px;">
+        <div style="height: 250px; margin-bottom: 2rem;">
             <canvas id="trendChart"></canvas>
+        </div>
+
+        <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">📊 Tren Growth Bulanan (%)</h3>
+        <div style="height: 200px;">
+            <canvas id="growthChart"></canvas>
         </div>
     </div>
 
@@ -192,6 +197,36 @@
                 plugins: { legend: { display: false } },
                 scales: {
                     y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8888a0', callback: v => 'Rp ' + (v/1000000).toFixed(0) + 'jt' } },
+                    x: { grid: { display: false }, ticks: { color: '#8888a0' } }
+                }
+            }
+        });
+
+        // Growth Chart
+        new Chart(document.getElementById('growthChart').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: {!! json_encode(collect($growthSeries)->pluck('month')->toArray()) !!},
+                datasets: [{
+                    label: 'Growth %',
+                    data: {!! json_encode(collect($growthSeries)->pluck('growth')->map(fn($g) => round($g, 1))->toArray()) !!},
+                    backgroundColor: {!! json_encode(collect($growthSeries)->pluck('growth')->map(fn($g) => $g >= 0 ? 'rgba(16, 185, 129, 0.6)' : 'rgba(239, 68, 68, 0.6)')->toArray()) !!},
+                    borderColor: {!! json_encode(collect($growthSeries)->pluck('growth')->map(fn($g) => $g >= 0 ? '#10b981' : '#ef4444')->toArray()) !!},
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { 
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: context => context.raw + '%' } }
+                },
+                scales: {
+                    y: { 
+                        grid: { color: 'rgba(255,255,255,0.05)' }, 
+                        ticks: { color: '#8888a0', callback: v => v + '%' } 
+                    },
                     x: { grid: { display: false }, ticks: { color: '#8888a0' } }
                 }
             }

@@ -656,7 +656,7 @@ class InsightController extends Controller
             ]);
         }
 
-        $reportData = $this->cachedResult('principal_report_v7', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles) {
+        $reportData = $this->cachedResult('principal_report_v8', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles, $principleId) {
             // Find the Principle ID for the selected name
             $principleId = Transaction::join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
                 ->whereIn('upload_histories.period_id', $periodIds)
@@ -685,12 +685,49 @@ class InsightController extends Controller
                 DB::raw('COUNT(DISTINCT transactions.outlet_id) as total_outlets')
             )->first();
 
-            // 2. Trend (Weekly) - Using transaction_date for trend is okay
+            // 2. Trend (Weekly)
             $trend = (clone $queryBase)->select(
                 DB::raw('DATE_FORMAT(transactions.transaction_date, "%Y-%u") as week'),
                 DB::raw('MIN(transactions.transaction_date) as week_start'),
                 DB::raw('SUM(sales.total) as total')
             )->groupBy('week')->orderBy('week')->get();
+
+            // 2b. Monthly Growth Series (for the chart)
+            // We want the 3 active months + 1 baseline month
+            $activePeriods = \App\Models\Period::whereIn('id', $periodIds)->orderBy('year')->orderBy('month')->get();
+            $baselinePeriod = $activePeriods->first()->getPrecedingIds(1);
+            $allGrowthPeriodIds = array_merge($baselinePeriod, $activePeriods->pluck('id')->toArray());
+            
+            $monthlyData = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                ->whereIn('upload_histories.period_id', $allGrowthPeriodIds);
+            
+            if ($principleId) {
+                $monthlyData->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
+            } else {
+                $monthlyData->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+            }
+            $this->applyBranchFilter($monthlyData, $branch);
+            
+            $monthlySales = $monthlyData->select(
+                'upload_histories.period_id',
+                DB::raw('SUM(sales.total) as total')
+            )->groupBy('upload_histories.period_id')->get()->keyBy('period_id');
+
+            $growthSeries = [];
+            $prevVal = null;
+            foreach ($allGrowthPeriodIds as $pId) {
+                $currVal = $monthlySales[$pId]->total ?? 0;
+                $pModel = \App\Models\Period::find($pId);
+                if ($prevVal !== null) {
+                    $growthSeries[] = [
+                        'month' => $pModel->name,
+                        'value' => $currVal,
+                        'growth' => $prevVal > 0 ? (($currVal - $prevVal) / $prevVal) * 100 : ($currVal > 0 ? 100 : 0)
+                    ];
+                }
+                $prevVal = $currVal;
+            }
 
             // 3. Top Products
             $topProducts = (clone $queryBase)->join('products', 'sales.product_id', '=', 'products.id')
@@ -736,7 +773,7 @@ class InsightController extends Controller
                 $prevVal = $prevValQuery->sum('sales.total');
             }
 
-            $growthVal = ($prevVal > 0) ? (($currVal - $prevVal) / $prevVal) * 100 : (($currVal > 0) ? 100 : 0);
+                        $growthVal = ($prevVal > 0) ? (($currVal - $prevVal) / $prevVal) * 100 : (($currVal > 0) ? 100 : 0);
 
             // 8. Sleeper Outlets
             $rfmNow = \Carbon\Carbon::now(); // Use current date for recency calculation
@@ -756,7 +793,7 @@ class InsightController extends Controller
                 $sleeperDetails = \App\Models\Outlet::whereIn('id', $sleeperIds)->get()->keyBy('id');
                 foreach($sleepers as $s) {
                     $s->name = $sleeperDetails[$s->outlet_id]->name ?? 'Unknown';
-                    $s->days = Carbon::parse($s->last_date)->diffInDays($rfmNow);
+                    $s->days = \Carbon\Carbon::parse($s->last_date)->diffInDays($rfmNow);
                 }
             }
 
@@ -767,7 +804,7 @@ class InsightController extends Controller
                 ->groupBy('products.id', 'products.name')
                 ->orderByDesc('value')->limit(5)->get();
 
-            return compact('summary', 'trend', 'topProducts', 'topOutlets', 'topSalesmen', 'cityAnalysis', 'growthVal', 'currVal', 'sleepers', 'returns');
+            return compact('summary', 'trend', 'growthSeries', 'topProducts', 'topOutlets', 'topSalesmen', 'cityAnalysis', 'growthVal', 'currVal', 'sleepers', 'returns');
         });
 
         return view('insights.principal-report', [
@@ -776,6 +813,7 @@ class InsightController extends Controller
             'selected_branch' => $branch,
             'summary' => $reportData['summary'],
             'trend' => $reportData['trend'],
+            'growthSeries' => $reportData['growthSeries'],
             'topProducts' => $reportData['topProducts'],
             'topOutlets' => $reportData['topOutlets'],
             'topSalesmen' => $reportData['topSalesmen'],
