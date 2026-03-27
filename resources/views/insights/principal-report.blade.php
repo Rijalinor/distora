@@ -94,12 +94,17 @@
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
         <!-- Sleeper Alert -->
         <div style="background: rgba(239, 68, 68, 0.05); padding: 1.5rem; border-radius: 16px; border: 1px solid #ef4444;">
-            <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: #ef4444; display: flex; align-items: center; gap: 0.5rem;">⚠️ Top Toko Hampir Hilang</h3>
-            <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1rem;">Toko VIP brand ini yang tidak belanja > 14 hari.</p>
+            <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: #ef4444; display: flex; align-items: center; gap: 0.5rem;">⚠️ Top Toko Lama Tidak Order</h3>
+            <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1rem;">Daftar toko yang paling lama tidak melakukan pemesanan untuk brand ini.</p>
             @forelse($sleepers as $s)
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                    <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">{{ $s->name }}</div>
-                    <div style="font-size: 0.75rem; color: #ef4444; font-weight: 800;">{{ $s->days }} Hari</div>
+                    <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">
+                        {{ $s->name }}
+                        <div style="font-size: 0.7rem; color: var(--text-muted); font-weight: 400;">
+                            Last Order: {{ \Carbon\Carbon::parse($s->last_date)->translatedFormat('d M Y') }}
+                        </div>
+                    </div>
+                    <div style="font-size: 0.75rem; color: #ef4444; font-weight: 800;">{{ floor($s->days) }} Hari</div>
                 </div>
             @empty
                 <div style="font-size: 0.85rem; color: #10b981;">✅ Semua toko VIP terpantau aktif.</div>
