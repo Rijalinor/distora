@@ -4,16 +4,28 @@
 
 @section('content')
 <div class="mb-4">
-    <a href="{{ route('insights.index') }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-        ← Kembali ke Pusat Kendali
-    </a>
-    <div class="d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="mb-4 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
         <div>
+            <a href="{{ route('insights.index', ['branch' => $selected_branch, 'period_id' => $activePeriod->id]) }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">← Kembali</a>
             <h1 style="font-size: 1.5rem; font-weight: 700;">🛒 Rekomendasi Order Pabrik</h1>
-            <p style="color: var(--text-muted); font-size: 0.9rem;">Hitung kuantitas pesanan berdasarkan target hari stok (Buffer Days).</p>
+            <p style="color: var(--text-muted); font-size: 0.9rem;">Estimasi kebutuhan stok periode <strong>{{ $activePeriod->name }}</strong>.</p>
         </div>
-        
-        <form method="GET" action="{{ route('insights.purchase-order') }}" style="display: flex; gap: 1rem; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
+
+        <form method="GET" action="{{ route('insights.purchase-order') }}" style="display: flex; gap: 1rem; align-items: center; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border); flex-wrap: wrap;">
+            <!-- Filter Periode -->
+            <div style="display: flex; flex-direction: column;">
+                <label style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Periode</label>
+                <select name="period_id" onchange="this.form.submit()" style="padding: 0.2rem; border: none; background: transparent; color: var(--accent-hover); font-weight: 800; outline: none; cursor: pointer;">
+                    @foreach($allPeriods as $p)
+                        <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                            {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
+
+            <div style="width: 1px; height: 30px; background: var(--border);"></div>
+
             <!-- Filter Cabang -->
             <div style="display: flex; flex-direction: column;">
                 <label style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Wilayah</label>
@@ -24,8 +36,8 @@
                     <option value="OBM_03" {{ $selected_branch === 'OBM_03' ? 'selected' : '' }}>Batulicin</option>
                 </select>
             </div>
-            
-            <div style="width: 1px; background: var(--border); margin: 0.3rem 0;"></div>
+
+            <div style="width: 1px; height: 30px; background: var(--border);"></div>
 
             <!-- Filter Principal -->
             <div style="display: flex; flex-direction: column;">
@@ -45,8 +57,10 @@
 <div class="main-card mb-4" style="background: var(--bg-card); border-radius: 16px; border: 1px solid var(--border); padding: 1.5rem; border-left: 4px solid var(--accent);">
     <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem;">📖 Instruksi Order Barang</h3>
     <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5;">
-        Menu ini membantu Anda menghitung berapa banyak barang yang harus dipesan ke pabrik. Masukkan <strong>"Target Hari (Buffer)"</strong> 
-        untuk menentukan berapa hari stok tersebut harus bertahan (contoh: 30 hari). Tambahkan <strong>"Lonjakan (%)"</strong> jika diprediksi ada kenaikan permintaan.
+        Menu ini membantu Anda menghitung berapa banyak barang yang harus dipesan ke pabrik. 
+        Sistem menggunakan **Rata-rata Penjualan 3 Bulan (Total ÷ 90 hari)** untuk hasil yang lebih stabil.
+        Masukkan <strong>"Target Hari (Buffer)"</strong> untuk menentukan berapa hari stok tersebut harus bertahan (contoh: 30 hari). 
+        Tambahkan <strong>"Lonjakan (%)"</strong> jika diprediksi ada kenaikan permintaan.
     </p>
 </div>
 
@@ -67,12 +81,18 @@
             <thead>
                 <tr style="border-bottom: 1px solid var(--border); text-align: left;">
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase;">Prinsipel / Produk</th>
-                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Stok Fisik</th>
-                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">ADS (90 Hari)</th>
-                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: center; width: 120px;">Lonjakan (%)</th>
+                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Stok</th>
+                    
+                    @if(count($data) > 0 && isset($data[0]->m1_name))
+                        <th style="padding: 1rem 0.5rem; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; text-align: right;">{{ $data[0]->m1_name }}</th>
+                        <th style="padding: 1rem 0.5rem; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; text-align: right;">{{ $data[0]->m2_name }}</th>
+                        <th style="padding: 1rem 0.5rem; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; text-align: right;">{{ $data[0]->m3_name }}</th>
+                    @endif
+
+                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;" title="Total Penjualan 3 Bulan / 3">AMS</th>
+                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: center; width: 100px;">Surge</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Ctn Size</th>
-                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Butuh (Hari)</th>
-                    <th style="padding: 1rem 0.5rem; color: var(--accent); font-size: 0.85rem; text-transform: uppercase; text-align: right; font-weight: 800;">Rekomendasi Order</th>
+                    <th style="padding: 1rem 0.5rem; color: var(--accent); font-size: 0.85rem; text-transform: uppercase; text-align: right; font-weight: 800;">Order Recommendation</th>
                 </tr>
             </thead>
             <tbody>
@@ -92,7 +112,15 @@
                     <tr style="border-bottom: 1px solid var(--border);" class="order-row" 
                         data-stock="{{ $item->current_stock }}" 
                         data-ctn-size="{{ $ctnSize }}"
-                        data-ads="{{ $item->avg_daily }}">
+                        data-ams="{{ $item->avg_monthly }}"
+                        data-ads="{{ $item->avg_daily }}"
+                        data-qty-m1="{{ $item->qty_m1 }}"
+                        data-qty-m2="{{ $item->qty_m2 }}"
+                        data-qty-m3="{{ $item->qty_m3 }}"
+                        data-m1-name="{{ $item->m1_name }}"
+                        data-m2-name="{{ $item->m2_name }}"
+                        data-m3-name="{{ $item->m3_name }}"
+                    >
 
                         <td style="padding: 1rem 0.5rem;">
                             <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">{{ $item->principle_name }}</div>
@@ -101,21 +129,33 @@
                         <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-primary); font-weight: 500;">
                             {{ number_format($item->current_stock, 0, ',', '.') }}
                         </td>
-                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-secondary); font-size: 0.85rem;">
-                            {{ number_format($item->avg_daily, 1, ',', '.') }}/hari
+                        
+                        <!-- Monthly Sales Breakdown with Cartoon Conversions -->
+                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-secondary); font-size: 0.75rem;">
+                            <div style="font-weight: 600;">{{ number_format($item->qty_m1, 0, ',', '.') }}</div>
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">{{ round($item->qty_m1 / $ctnSize, 1) }} Ctn</div>
                         </td>
+                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-secondary); font-size: 0.75rem;">
+                            <div style="font-weight: 600;">{{ number_format($item->qty_m2, 0, ',', '.') }}</div>
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">{{ round($item->qty_m2 / $ctnSize, 1) }} Ctn</div>
+                        </td>
+                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-secondary); font-size: 0.75rem;">
+                            <div style="font-weight: 600;">{{ number_format($item->qty_m3, 0, ',', '.') }}</div>
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">{{ round($item->qty_m3 / $ctnSize, 1) }} Ctn</div>
+                        </td>
+
+                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--accent-hover); font-size: 0.85rem; font-weight: 700;">
+                            {{ number_format($item->avg_monthly, 0, ',', '.') }}
+                        </td>
+                        
                         <td style="padding: 1rem 0.5rem; text-align: center;">
                             <input type="number" class="surge-input" value="0" min="0" step="5"
-                                   style="width: 60px; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 0.2rem; text-align: center; outline: none;">
+                                   style="width: 50px; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 0.1rem; text-align: center; outline: none; font-size: 0.8rem;">
                         </td>
-                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-muted); font-size: 0.85rem;">
+                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-muted); font-size: 0.8rem;">
                              x{{ $ctnSize }}
                         </td>
-                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-muted); font-size: 0.85rem;" class="target-days-cell">
-
-                            30 Hari
-                        </td>
-                        <td style="padding: 1rem 0.5rem; text-align: right;">
+                        <td style="padding: 1rem 0.5rem; text-align: right;" class="order-result-cell" title="Menghitung...">
                              <div class="order-ctn-text" style="color: var(--text-primary); font-size: 0.8rem; font-weight: 600;">0 Ctn</div>
                              <strong class="order-qty-text" style="color: var(--accent); font-size: 1.1rem;">0</strong>
                              <span style="font-size: 0.7rem; color: var(--text-muted);">Pcs</span>
@@ -154,24 +194,46 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.order-row').forEach(row => {
             const stock = parseFloat(row.dataset.stock);
             const ads = parseFloat(row.dataset.ads);
+            const ams = parseFloat(row.dataset.ams);
             const ctnSize = parseInt(row.dataset.ctnSize) || 1;
             const surge = parseFloat(row.querySelector('.surge-input').value) || 0;
             
+            const m1 = parseFloat(row.dataset.qtyM1);
+            const m2 = parseFloat(row.dataset.qtyM2);
+            const m3 = parseFloat(row.dataset.qtyM3);
+            const n1 = row.dataset.m1Name;
+            const n2 = row.dataset.m2Name;
+            const n3 = row.dataset.m3Name;
+
             // Re-calc logic: (ADS * (1 + surge/100) * targetDays) - currentStock
             const adjustedVelocity = ads * (1 + (surge / 100));
             const totalNeed = adjustedVelocity * targetDays;
             const recommend = Math.max(0, Math.ceil(totalNeed - stock));
             
-            row.querySelector('.target-days-cell').innerText = targetDays + ' Hari';
             const orderText = row.querySelector('.order-qty-text');
             orderText.innerText = recommend.toLocaleString('id-ID');
             
             const ctnText = row.querySelector('.order-ctn-text');
             const ctnValue = (recommend / ctnSize).toFixed(1);
             ctnText.innerText = ctnValue + ' Ctn';
+
+            // Detailed Tooltip with Monthly Breakdown
+            const resultCell = row.querySelector('.order-result-cell');
+            const formulaDesc = `HISTORI PENJUALAN:\n` +
+                                `- ${n1}: ${m1.toLocaleString('id-ID')} pcs (${(m1/ctnSize).toFixed(1)} ctn)\n` +
+                                `- ${n2}: ${m2.toLocaleString('id-ID')} pcs (${(m2/ctnSize).toFixed(1)} ctn)\n` +
+                                `- ${n3}: ${m3.toLocaleString('id-ID')} pcs (${(m3/ctnSize).toFixed(1)} ctn)\n` +
+                                `-----------------------------------\n` +
+                                `RATA-RATA (AMS): ${ams.toLocaleString('id-ID', {maximumFractionDigits:0})} /bln\n\n` +
+                                `PERHITUNGAN ORDER:\n` +
+                                `- Target (${targetDays} hari): ${(ads * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
+                                `- Lonjakan (${surge}%): +${((ads * surge/100) * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
+                                `- Stok Saat Ini: -${stock.toLocaleString('id-ID')} pcs\n` +
+                                `=========================\n` +
+                                `REKOMENDASI: ${recommend.toLocaleString('id-ID')} pcs (${ctnValue} ctn)`;
+            resultCell.title = formulaDesc;
             
             if (recommend > 0) {
-
                 orderText.parentElement.parentElement.style.background = 'rgba(0, 153, 255, 0.05)';
             } else {
                 orderText.parentElement.parentElement.style.background = 'transparent';
@@ -188,52 +250,56 @@ document.addEventListener('DOMContentLoaded', function() {
         const principle = "{{ $selected_principle }}";
         const fileName = `Rekomendasi_Order_${principle}_${branch}_${targetDays}Hari.xlsx`;
         
+        const firstRow = document.querySelector('.order-row');
+        const n1 = firstRow?.dataset.m1Name || 'M-2';
+        const n2 = firstRow?.dataset.m2Name || 'M-1';
+        const n3 = firstRow?.dataset.m3Name || 'M-0';
+
         // Prepare data for Excel
         const data = [
-            ["LAPORAN REKOMENDASI ORDER PABRIK"],
+            ["LAPORAN REKOMENDASI ORDER PABRIK (SANGAT DETAIL)"],
             ["Wilayah", branch],
             ["Prinsipel", principle],
             ["Target Stok", targetDays + " Hari"],
             ["Tanggal Export", new Date().toLocaleString()],
             [],
-            ["PRINSIPEL", "NAMA PRODUK", "STOK FISIK", "ADS (90 HARI)", "LONJAKAN (%)", "ISI/CTN", "BUTUH (HARI)", "ORDER (PCS)", "ORDER (CTN)"]
+            ["PRINSIPEL", "NAMA PRODUK", "STOK", n1, n2, n3, "AMS (BLN)", "SURGE", "ISI/CTN", "ORDER (PCS)", "ORDER (CTN)"]
         ];
         
         document.querySelectorAll('.order-row').forEach(row => {
-            const cells = row.querySelectorAll('td');
             const principleName = row.querySelector('div').innerText;
             const productName = row.querySelector('strong').innerText;
             const stock = row.dataset.stock;
-            const ads = row.dataset.ads;
+            const ams = row.dataset.ams;
             const ctnSize = row.dataset.ctnSize;
             const surge = row.querySelector('.surge-input').value;
             const recommend = row.querySelector('.order-qty-text').innerText.replace(/\./g, '');
             const ctnVal = (parseInt(recommend) / parseInt(ctnSize)).toFixed(1);
             
-            if (parseInt(recommend) > 0) {
+            const m1 = row.dataset.qtyM1;
+            const m2 = row.dataset.qtyM2;
+            const m3 = row.dataset.qtyM3;
+
+            if (parseInt(recommend) > 0 || parseFloat(ams) > 0) {
               data.push([
                   principleName,
                   productName,
                   parseFloat(stock),
-                  parseFloat(ads),
+                  parseFloat(m1),
+                  parseFloat(m2),
+                  parseFloat(m3),
+                  parseFloat(ams),
                   parseFloat(surge) + "%",
                   parseInt(ctnSize),
-                  targetDays + " Hari",
                   parseInt(recommend),
                   parseFloat(ctnVal)
               ]);
             }
         });
 
-        
         const ws = XLSX.utils.aoa_to_sheet(data);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Order List");
-        
-        // Auto-size columns
-        const colWidths = [20, 40, 15, 15, 15, 15, 20];
-        ws['!cols'] = colWidths.map(w => ({ wch: w }));
-        
+        XLSX.utils.book_append_sheet(wb, ws, "Order List Detail");
         XLSX.writeFile(wb, fileName);
     };
 

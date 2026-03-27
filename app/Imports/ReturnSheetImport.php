@@ -15,8 +15,10 @@ use Maatwebsite\Excel\Concerns\SkipsEmptyRows;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
 use Maatwebsite\Excel\Concerns\WithChunkReading;
+use Maatwebsite\Excel\Concerns\WithEvents;
+use Maatwebsite\Excel\Events\AfterSheet;
 
-class ReturnSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, WithChunkReading
+class ReturnSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, WithChunkReading, WithEvents
 {
     protected int $uploadHistoryId;
     protected int $rowNumber = 1;
@@ -51,6 +53,18 @@ class ReturnSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows,
                 $this->logError($e->getMessage(), $row->toArray());
             }
         }
+
+        // Help garbage collector between chunks
+        gc_collect_cycles();
+    }
+
+    public function registerEvents(): array
+    {
+        return [
+            AfterSheet::class => function(AfterSheet $event) {
+                gc_collect_cycles();
+            },
+        ];
     }
 
     public function getSuccessRows(): int
@@ -249,6 +263,7 @@ class ReturnSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows,
     protected function buildTransactionMeta(array $data): array
     {
         return [
+            'dist_id' => $this->value($data, 'branch'),
             'branch' => $this->value($data, 'branch'),
             'branch_name' => $this->value($data, 'branch_name'),
             'supervisor' => $this->value($data, 'supervisor'),

@@ -4,21 +4,33 @@
 
 @section('content')
 <div class="mb-4">
-    <a href="{{ route('insights.index') }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+    <a href="{{ route('insights.index', ['branch' => $selected_branch, 'period_id' => $activePeriod->id]) }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
         ← Kembali ke Pusat Kendali
     </a>
-    <div class="d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
         <div>
             <h1 style="font-size: 1.5rem; font-weight: 700;">💎 Segmentasi Outlet (RFM)</h1>
-            <p style="color: var(--text-muted); font-size: 0.9rem;">Analisis periode <strong>90 Hari Terakhir</strong> untuk menentukan prioritas kunjungan.</p>
+            <p style="color: var(--text-muted); font-size: 0.9rem;">Analisis <strong>3 bulan terakhir</strong> (hingga {{ $activePeriod->name }}) untuk menentukan prioritas kunjungan.</p>
         </div>
-        <form method="GET" action="{{ route('insights.rfm') }}" style="background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
-            <select name="branch" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none;">
+        <form method="GET" action="{{ route('insights.rfm') }}" style="display: flex; gap: 0.75rem; align-items: center; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
+            <select name="period_id" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--accent-hover); font-weight: 800; outline: none; cursor: pointer;">
+                @foreach($allPeriods as $p)
+                    <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                        {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                    </option>
+                @endforeach
+            </select>
+            
+            <div style="width: 1px; height: 20px; background: var(--border);"></div>
+
+            <select name="branch" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
                 <option value="all" {{ $selected_branch === 'all' ? 'selected' : '' }}>Semua Cabang</option>
                 <option value="OBM_01" {{ $selected_branch === 'OBM_01' ? 'selected' : '' }}>Banjarmasin (OBM_01)</option>
                 <option value="OBM_02" {{ $selected_branch === 'OBM_02' ? 'selected' : '' }}>Barabai (OBM_02)</option>
                 <option value="OBM_03" {{ $selected_branch === 'OBM_03' ? 'selected' : '' }}>Batulicin (OBM_03)</option>
             </select>
+        </form>
+    </div>
 </div>
 
 <!-- Cara Membaca Card -->

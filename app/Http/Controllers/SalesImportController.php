@@ -26,7 +26,7 @@ class SalesImportController extends Controller
         $file = $request->file('file');
 
         $uploadHistory = UploadHistory::create([
-            'period_id' => \App\Models\Period::getActive()->id,
+            'period_id' => $request->period_id ?? \App\Models\Period::getActive()->id,
             'file_name' => $file->getClientOriginalName(),
             'stored_path' => $file->store('imports/sales'),
             'uploaded_by' => optional($request->user())->id,

@@ -15,8 +15,10 @@ use Maatwebsite\Excel\Concerns\SkipsEmptyRows;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
 use Maatwebsite\Excel\Concerns\WithChunkReading;
+use Maatwebsite\Excel\Concerns\WithEvents;
+use Maatwebsite\Excel\Events\AfterSheet;
 
-class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, WithChunkReading
+class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, WithChunkReading, WithEvents
 {
     protected int $uploadHistoryId;
     protected int $rowNumber = 1;
@@ -51,6 +53,18 @@ class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, 
                 $this->logError($e->getMessage(), $row->toArray());
             }
         }
+
+        // Help garbage collector between chunks
+        gc_collect_cycles();
+    }
+
+    public function registerEvents(): array
+    {
+        return [
+            AfterSheet::class => function(AfterSheet $event) {
+                gc_collect_cycles();
+            },
+        ];
     }
 
     public function getSuccessRows(): int
@@ -107,13 +121,13 @@ class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, 
         $discInvoice = $this->toDecimal($this->value($data, 'disc_invoice'));
         $vat = $this->toDecimal($this->value($data, 'vat'));
 
-        $soldAt = $this->parseDateTime($this->value($data, 'si_created_date'))
-            ?? $this->parseDateTime($this->value($data, 'so_date'))
-            ?? $this->parseDateTime($this->value($data, 'pfi_date'));
+        $soldAt = $this->parseDateTime($this->value($data, 'pfi_date'))
+            ?? $this->parseDateTime($this->value($data, 'si_created_date'))
+            ?? $this->parseDateTime($this->value($data, 'so_date'));
 
-        $transactionDate = $this->parseDate($this->value($data, 'si_created_date'))
+        $transactionDate = $this->parseDate($this->value($data, 'pfi_date'))
+            ?? $this->parseDate($this->value($data, 'si_created_date'))
             ?? $this->parseDate($this->value($data, 'so_date'))
-            ?? $this->parseDate($this->value($data, 'pfi_date'))
             ?? now()->toDateString();
 
         return DB::transaction(function () use (

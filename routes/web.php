@@ -35,6 +35,7 @@ Route::middleware('auth')->group(function () {
     // Tutup Buku (Period Closing)
     Route::get('/reset', [ResetController::class, 'index'])->name('reset.index');
     Route::post('/reset', [ResetController::class, 'execute'])->name('reset.execute');
+    Route::post('/periods', [ResetController::class, 'store'])->name('periods.store');
     Route::get('/periode/{period}', [ResetController::class, 'show'])->name('reset.show');
 
     // Analytics & Export

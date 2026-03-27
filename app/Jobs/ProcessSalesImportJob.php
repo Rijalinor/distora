@@ -26,6 +26,9 @@ class ProcessSalesImportJob implements ShouldQueue
 
     public function handle(): void
     {
+        ini_set('memory_limit', '2048M');
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+
         $uploadHistory = UploadHistory::findOrFail($this->uploadHistoryId);
 
         $uploadHistory->update([

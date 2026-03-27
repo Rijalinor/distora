@@ -19,11 +19,16 @@ class ResetController extends Controller
     /**
      * Show the closing confirmation page.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $activePeriod = Period::getActive();
+        $selectedPeriodId = $request->query('period_id');
+        $activePeriods = Period::active()->get();
+        
+        $activePeriod = $selectedPeriodId 
+            ? Period::findOrFail($selectedPeriodId) 
+            : Period::getActive();
 
-        // Stats for the active period
+        // Stats for the selected active period
         $uploadIds = UploadHistory::where('period_id', $activePeriod->id)->pluck('id');
         $transactionIds = Transaction::whereIn('upload_history_id', $uploadIds)->pluck('id');
 
@@ -46,7 +51,7 @@ class ResetController extends Controller
             ->orderByDesc('month')
             ->get();
 
-        return view('reset.index', compact('summary', 'closedPeriods'));
+        return view('reset.index', compact('summary', 'closedPeriods', 'activePeriods', 'activePeriod'));
     }
 
     /**
@@ -55,10 +60,16 @@ class ResetController extends Controller
     public function execute(Request $request)
     {
         $request->validate([
+            'period_id' => 'required|exists:periods,id',
             'confirmation' => 'required|in:TUTUP',
         ]);
 
-        $activePeriod = Period::getActive();
+        $activePeriod = Period::findOrFail($request->period_id);
+        
+        if ($activePeriod->status !== 'active') {
+            return back()->with('error', 'Hanya periode aktif yang bisa ditutup.');
+        }
+
         $uploadIds = UploadHistory::where('period_id', $activePeriod->id)->pluck('id');
         $transactionIds = Transaction::whereIn('upload_history_id', $uploadIds)->pluck('id');
 
@@ -69,7 +80,7 @@ class ResetController extends Controller
             'sales_count' => Sale::whereIn('transaction_id', $transactionIds)->where('total', '>', 0)->count(),
             'returns_count' => Sale::whereIn('transaction_id', $transactionIds)->where('total', '<', 0)->count(),
             'stocks_count' => Stock::whereIn('upload_history_id', $uploadIds)->count(),
-            'outlets_count' => Outlet::count(),
+            'outlets_count' => Outlet::count(), // Note: This counts ALL outlets, might need refinement if outlets are shared
             'products_count' => Product::count(),
             'total_sales' => Sale::whereIn('transaction_id', $transactionIds)->where('total', '>', 0)->sum('total'),
             'total_returns' => Sale::whereIn('transaction_id', $transactionIds)->where('total', '<', 0)->sum('total'),
@@ -81,52 +92,55 @@ class ResetController extends Controller
 
         DB::beginTransaction();
         try {
-            // 1. Close the current period
+            // 1. Close the selected period
             $activePeriod->update([
                 'status' => 'closed',
                 'closed_at' => now(),
                 'summary' => $summary,
             ]);
 
-            // 2. Delete all transactional data for this period
-            DB::statement('SET FOREIGN_KEY_CHECKS=0');
-
-            ImportLog::whereIn('upload_history_id', $uploadIds)->delete();
-            Sale::whereIn('transaction_id', $transactionIds)->delete();
-            Stock::whereIn('upload_history_id', $uploadIds)->delete();
-            Transaction::whereIn('upload_history_id', $uploadIds)->delete();
-
-            // Delete uploaded files
-            $storedPaths = UploadHistory::whereIn('id', $uploadIds)->pluck('stored_path')->filter();
-            foreach ($storedPaths as $path) {
-                Storage::delete($path);
-            }
-            UploadHistory::whereIn('id', $uploadIds)->delete();
-
-            // 3. Clear outlets & products (will be recreated on next import)
-            Outlet::truncate();
-            Product::truncate();
-
-            DB::statement('SET FOREIGN_KEY_CHECKS=1');
-
-            // 4. Auto-create next period
-            $nextMonth = now()->addMonth();
-            Period::create([
-                'name' => $nextMonth->translatedFormat('F Y'),
-                'year' => $nextMonth->year,
-                'month' => $nextMonth->month,
-                'status' => 'active',
-            ]);
+            // Data is now preserved instead of being deleted.
+            // This allows for historical analysis by filtering by period.
 
             DB::commit();
 
-            return redirect()->route('dashboard')
-                ->with('success', "Periode {$activePeriod->name} berhasil ditutup. Data bulan baru siap digunakan.");
+            return redirect()->route('reset.index')
+                ->with('success', "Periode {$activePeriod->name} berhasil ditutup.");
         } catch (\Throwable $e) {
             DB::rollBack();
             DB::statement('SET FOREIGN_KEY_CHECKS=1');
             return back()->with('error', 'Tutup buku gagal: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Create a new period (Past or Future).
+     */
+    public function store(Request $request)
+    {
+        $request->validate([
+            'month' => 'required|integer|min:1|max:12',
+            'year' => 'required|integer|min:2020|max:2030',
+        ]);
+
+        $date = \Carbon\Carbon::create($request->year, $request->month, 1);
+        
+        $exists = Period::where('year', $request->year)
+            ->where('month', $request->month)
+            ->exists();
+
+        if ($exists) {
+            return back()->with('error', 'Periode untuk bulan tersebut sudah ada.');
+        }
+
+        Period::create([
+            'name' => $date->translatedFormat('F Y'),
+            'year' => $request->year,
+            'month' => $request->month,
+            'status' => 'active',
+        ]);
+
+        return back()->with('success', "Periode {$date->translatedFormat('F Y')} berhasil dibuat.");
     }
 
     /**

@@ -16,10 +16,10 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
         $user = auth()->user();
-        $activePeriod = Period::getActive();
+        $activePeriod = Period::resolveFromRequest($request);
 
         // Salesman gets a personalized dashboard
         if ($user->role === 'salesman') {
@@ -31,16 +31,23 @@ class DashboardController extends Controller
             ->orderByDesc('created_at')
             ->paginate(10);
 
+        // Stats for the selected period
+        $uploadIds = UploadHistory::where('period_id', $activePeriod->id)->pluck('id');
+        
         $stats = [
-            'total_uploads' => UploadHistory::where('period_id', $activePeriod->id)->count(),
-            'outlets' => Outlet::count(),
-            'products' => Product::count(),
-            'transactions' => Transaction::count(),
-            'sales' => Sale::count(),
-            'stocks' => Stock::count(),
+            'total_uploads' => $uploadIds->count(),
+            'outlets' => Transaction::whereIn('upload_history_id', $uploadIds)->distinct('outlet_id')->count('outlet_id'),
+            'products' => Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                ->whereIn('transactions.upload_history_id', $uploadIds)
+                ->distinct('sales.product_id')->count('sales.product_id'),
+            'transactions' => Transaction::whereIn('upload_history_id', $uploadIds)->count(),
+            'sales' => Sale::whereHas('transaction', fn($q) => $q->whereIn('upload_history_id', $uploadIds))->count(),
+            'stocks' => Stock::whereIn('upload_history_id', $uploadIds)->count(),
         ];
 
-        return view('dashboard.index', compact('histories', 'stats', 'activePeriod'));
+        $allPeriods = Period::ordered()->get();
+
+        return view('dashboard.index', compact('histories', 'stats', 'activePeriod', 'allPeriods'));
     }
 
     protected function salesmanDashboard($user, $activePeriod)

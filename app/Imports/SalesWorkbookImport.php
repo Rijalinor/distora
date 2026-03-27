@@ -3,8 +3,10 @@
 namespace App\Imports;
 
 use Maatwebsite\Excel\Concerns\WithMultipleSheets;
+use Maatwebsite\Excel\Concerns\WithEvents;
+use Maatwebsite\Excel\Events\AfterImport;
 
-class SalesWorkbookImport implements WithMultipleSheets
+class SalesWorkbookImport implements WithMultipleSheets, WithEvents
 {
     protected int $uploadHistoryId;
     protected ?SalesSheetImport $salesSheetImport = null;
@@ -16,6 +18,15 @@ class SalesWorkbookImport implements WithMultipleSheets
     public function __construct(int $uploadHistoryId)
     {
         $this->uploadHistoryId = $uploadHistoryId;
+    }
+
+    public function registerEvents(): array
+    {
+        return [
+            AfterImport::class => function(AfterImport $event) {
+                gc_collect_cycles();
+            },
+        ];
     }
 
     public function sheets(): array

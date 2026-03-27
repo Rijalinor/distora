@@ -8,11 +8,37 @@ use App\Models\Transaction;
 use App\Models\Outlet;
 use App\Models\Product;
 use App\Models\Stock;
+use App\Models\Period;
+use App\Models\UploadHistory;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 
 class InsightController extends Controller
 {
+    private function getSelectedPeriod(Request $request)
+    {
+        return \App\Models\Period::resolveFromRequest($request);
+    }
+
+    /**
+     * Helper to cache expensive analytic results.
+     */
+    private function cachedResult(string $key, \App\Models\Period $period, callable $callback)
+    {
+        // Unique cache key based on period and branch
+        $branch = request()->query('branch', 'all');
+        $fullKey = "insight_{$key}_{$period->id}_{$branch}_" . md5(json_encode(request()->all()));
+
+        if ($period->status === 'closed') {
+            // Historical data never changes - cache forever
+            return Cache::rememberForever($fullKey, $callback);
+        }
+
+        // Active period data changes - cache for 10 minutes
+        return Cache::remember($fullKey, 600, $callback);
+    }
+
     private function getBranchFilter(Request $request)
     {
         return $request->query('branch', 'all');
@@ -25,102 +51,137 @@ class InsightController extends Controller
         }
     }
 
-    private function getCutoffDate()
+    private function get3MonthRange(\App\Models\Period $period)
     {
-        $latestDate = Transaction::max('transaction_date');
-        return $latestDate ? Carbon::parse($latestDate)->subDays(90)->toDateString() : now()->subDays(90)->toDateString();
+        // For March selection, we want IDs of Dec, Jan, Feb periods
+        return $period->getPrecedingIds(3);
+    }
+
+    private function getCutoffDate($period = null)
+    {
+        // No longer needed for date-based window, returning null or dummy
+        return null;
     }
 
     public function index(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $cutoff = $this->getCutoffDate();
+        $activePeriod = $this->getSelectedPeriod($request);
+        $periodIds = $this->get3MonthRange($activePeriod);
+        [$startDate, $endDate] = $activePeriod->getRange();
         
-        // Quick Summary Counts
-        $latestDate = Transaction::max('transaction_date') ?? now()->toDateString();
-        $d0 = Carbon::parse($latestDate);
-        
-        // 1. RFM Summary
-        $rfmCount = Transaction::where('total', '>', 0)->where('transaction_date', '>=', $cutoff);
-        $this->applyBranchFilter($rfmCount, $branch);
-        $totalOutlets = $rfmCount->distinct('outlet_id')->count();
+        $data = $this->cachedResult('index_summary_v5', $activePeriod, function() use ($branch, $activePeriod, $periodIds, $startDate, $endDate) {
+            // 1. RFM Summary
+            $rfmCount = Transaction::whereIn('upload_history_id', function($q) use ($periodIds) {
+                    $q->select('id')->from('upload_histories')->whereIn('period_id', $periodIds);
+                })
+                ->where('total', '>', 0);
+            $this->applyBranchFilter($rfmCount, $branch);
+            $totalOutlets = $rfmCount->distinct('outlet_id')->count();
 
-        // 2. Bundling Sample
-        $bestBundle = DB::table('sales as s1')
-            ->join('sales as s2', 's1.transaction_id', '=', 's2.transaction_id')
-            ->join('transactions', 's1.transaction_id', '=', 'transactions.id')
-            ->where('s1.product_id', '<', 's2.product_id')
-            ->where('s1.total', '>', 0)
-            ->where('s2.total', '>', 0)
-            ->where('transactions.transaction_date', '>=', $cutoff);
-        $this->applyBranchFilter($bestBundle, $branch);
-        $bestBundle = $bestBundle->select(DB::raw('COUNT(*) as count'))->first()->count > 0 ? 'Tersedia' : 'N/A';
+            // 2. Bundling Sample
+            $bestBundle = DB::table('sales as s1')
+                ->join('sales as s2', 's1.transaction_id', '=', 's2.transaction_id')
+                ->join('transactions', 's1.transaction_id', '=', 'transactions.id')
+                ->where('s1.product_id', '<', 's2.product_id')
+                ->where('s1.total', '>', 0)
+                ->where('s2.total', '>', 0)
+                ->whereBetween('transactions.transaction_date', [$startDate, $endDate]);
+            $this->applyBranchFilter($bestBundle, $branch);
+            $bestBundle = $bestBundle->select(DB::raw('COUNT(*) as count'))->first()->count > 0 ? 'Tersedia' : 'N/A';
 
+            // 3. Anomalies
+            $anomaliesCount = $this->getAnomaliesData($branch, $activePeriod)->count();
 
-        // 3. Anomalies
-        $anomaliesCount = $this->getAnomaliesData($branch)->count();
+            // 4. Stock alerts
+            $stockAlertsCount = count($this->getStockForecastData($branch, 'all', $activePeriod));
 
-        // 4. Stock alerts
-        $stockAlertsCount = count($this->getStockForecastData($branch));
+            // 5. Dead Stock
+            $deadStockCount = $this->getDeadStockData($branch, $activePeriod)->count();
 
-        // 5. Dead Stock
-        $deadStockCount = $this->getDeadStockData($branch)->count();
-
-        $data = [
-            'selected_branch' => $branch,
-            'summary' => [
+            return [
                 'outlets' => $totalOutlets,
                 'bundles' => $bestBundle,
                 'anomalies' => $anomaliesCount,
                 'stock_alerts' => $stockAlertsCount,
                 'dead_stock' => $deadStockCount,
-            ]
+            ];
+        });
+
+        $allPeriods = \App\Models\Period::ordered()->get();
+        $uiData = [
+            'selected_branch' => $branch,
+            'summary' => $data
         ];
 
-        return view('insights.index', compact('data'));
+        return view('insights.index', ['data' => $uiData, 'activePeriod' => $activePeriod, 'allPeriods' => $allPeriods]);
     }
 
     // --- PILLAR 1: RFM ---
     public function rfm(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $globalLastDate = Transaction::max('transaction_date');
-        $rfmNow = $globalLastDate ? Carbon::parse($globalLastDate) : now();
-
-        $rfmQuery = Transaction::join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
-            ->where('transactions.transaction_date', '>=', $this->getCutoffDate())
-            ->select(
-                'outlets.name',
-                DB::raw('MAX(transactions.transaction_date) as last_order'),
-                DB::raw('COUNT(transactions.id) as frequency'),
-                DB::raw('SUM(transactions.total) as monetary')
-            )
-
-            ->groupBy('outlets.id', 'outlets.name')
-            ->having('monetary', '>', 0)
-            ->orderByDesc('monetary');
+        $activePeriod = $this->getSelectedPeriod($request);
+        $periodIds = $this->get3MonthRange($activePeriod);
+        [$startDate, $endDate] = $activePeriod->getRange();
         
-        $this->applyBranchFilter($rfmQuery, $branch);
-        $rfm = $rfmQuery->get()->map(function($item) use ($rfmNow) {
-            $daysSinceOrder = Carbon::parse($item->last_order)->diffInDays($rfmNow);
-            if ($item->monetary > 10000000 && $daysSinceOrder <= 7) {
-                $segment = 'Sultan (High Priority)'; $color = 'success';
-            } elseif ($item->monetary > 5000000 && $daysSinceOrder <= 14) {
-                $segment = 'Gold (Growth)'; $color = 'info';
-            } elseif ($daysSinceOrder > 14) {
-                $segment = 'Sleeper (Risk)'; $color = 'danger';
-            } else {
-                $segment = 'Regular'; $color = 'secondary';
-            }
-            $item->days_since_order = $daysSinceOrder;
-            $item->segment = $segment;
-            $item->color = $color;
-            return $item;
+        $rfmNow = Carbon::parse($endDate);
+
+        $rfm = $this->cachedResult('rfm_v6', $activePeriod, function() use ($branch, $periodIds, $rfmNow) {
+            $rfmQuery = Transaction::join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                ->whereIn('upload_histories.period_id', $periodIds)
+                ->select(
+                    'outlets.name',
+                    DB::raw('MAX(transactions.transaction_date) as last_order'),
+                    DB::raw('COUNT(DISTINCT transactions.id) as frequency'),
+                    DB::raw('SUM(transactions.total) as monetary')
+                )
+                ->groupBy('outlets.id', 'outlets.name');
+
+            $this->applyBranchFilter($rfmQuery, $branch);
+
+            return $rfmQuery->get()->map(function($item) use ($rfmNow) {
+                $lastOrder = Carbon::parse($item->last_order);
+                $item->days_since_order = $lastOrder->diffInDays($rfmNow);
+                
+                // Segment logic...
+                $segment = 'New';
+                $color = 'info';
+                
+                if ($item->days_since_order > 90) {
+                    $segment = 'Lost';
+                    $color = 'secondary';
+                } elseif ($item->days_since_order > 60) {
+                    $segment = 'At Risk';
+                    $color = 'warning';
+                } elseif ($item->frequency > 5 && $item->monetary > 10000000) {
+                    $segment = 'Champion';
+                    $color = 'success';
+                } elseif ($item->days_since_order > 30) {
+                    $segment = 'Sleeper';
+                    $color = 'danger';
+                }
+
+                return [
+                    'name' => $item->name,
+                    'last_order' => $item->last_order,
+                    'frequency' => (int) $item->frequency,
+                    'monetary' => (float) $item->monetary,
+                    'days_since_order' => (int) $item->days_since_order,
+                    'segment' => $segment,
+                    'color' => $color
+                ];
+            })->toArray();
         });
+
+        $rfm = collect($rfm)->map(fn($i) => (object)$i);
 
         return view('insights.rfm', [
             'data' => $rfm,
             'selected_branch' => $branch,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get(),
             'summary' => [
                 'sultans' => $rfm->where('segment', 'Sultan (High Priority)')->count(),
                 'sleepers' => $rfm->where('segment', 'Sleeper (Risk)')->count(),
@@ -132,32 +193,38 @@ class InsightController extends Controller
     public function bundling(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $query = DB::table('sales as s1')
-            ->join('sales as s2', 's1.transaction_id', '=', 's2.transaction_id')
-            ->join('transactions', 's1.transaction_id', '=', 'transactions.id')
-            ->join('products as p1', 's1.product_id', '=', 'p1.id')
-            ->join('products as p2', 's2.product_id', '=', 'p2.id')
-            ->where('s1.product_id', '<', 's2.product_id')
-            ->where('s1.total', '>', 0)
-            ->where('s2.total', '>', 0)
-            ->where('transactions.transaction_date', '>=', $this->getCutoffDate());
+        $activePeriod = $this->getSelectedPeriod($request);
+        [$startDate, $endDate] = $this->get3MonthRange($activePeriod);
 
-        
-        $this->applyBranchFilter($query, $branch);
+        $bundling = $this->cachedResult('bundling_3m', $activePeriod, function() use ($branch, $startDate, $endDate) {
+            $query = DB::table('sales as s1')
+                ->join('sales as s2', 's1.transaction_id', '=', 's2.transaction_id')
+                ->join('transactions', 's1.transaction_id', '=', 'transactions.id')
+                ->join('products as p1', 's1.product_id', '=', 'p1.id')
+                ->join('products as p2', 's2.product_id', '=', 'p2.id')
+                ->where('s1.product_id', '<', 's2.product_id')
+                ->where('s1.total', '>', 0)
+                ->where('s2.total', '>', 0)
+                ->whereBetween('transactions.transaction_date', [$startDate, $endDate]);
 
-        $bundling = $query->select(
-                'p1.name as product_a',
-                'p2.name as product_b',
-                DB::raw('COUNT(DISTINCT s1.transaction_id) as times_bought_together')
-            )
-            ->groupBy('s1.product_id', 's2.product_id', 'p1.name', 'p2.name')
-            ->orderByDesc('times_bought_together')
-            ->limit(30)
-            ->get();
+            $this->applyBranchFilter($query, $branch);
+
+            return $query->select(
+                    'p1.name as product_a',
+                    'p2.name as product_b',
+                    DB::raw('COUNT(DISTINCT s1.transaction_id) as times_bought_together')
+                )
+                ->groupBy('s1.product_id', 's2.product_id', 'p1.name', 'p2.name')
+                ->orderByDesc('times_bought_together')
+                ->limit(30)
+                ->get();
+        });
 
         return view('insights.bundling', [
             'data' => $bundling,
-            'selected_branch' => $branch
+            'selected_branch' => $branch,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
@@ -165,31 +232,43 @@ class InsightController extends Controller
     public function discounts(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $cutoff = $this->getCutoffDate();
-        $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-            ->whereNotNull('transactions.meta')
-            ->where('transactions.transaction_date', '>=', $cutoff)
-            ->where('sales.total', '>', 0)
-            ->select(
-
-                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle"),
-                DB::raw('SUM(sales.gross_price) as gross_sales'),
-                DB::raw('SUM(sales.disc_item + sales.disc_internal + sales.disc_external + sales.disc_invoice) as total_discount'),
-                DB::raw('SUM(sales.total) as net_sales')
-            )
-            ->groupBy('principle')
-            ->having('gross_sales', '>', 0)
-            ->orderByDesc('net_sales');
+        $activePeriod = $this->getSelectedPeriod($request);
+        $periodIds = $this->get3MonthRange($activePeriod);
         
-        $this->applyBranchFilter($query, $branch);
-        $discounts = $query->get()->filter(fn($r) => $r->principle)->map(function($item) {
-            $item->discount_ratio = ($item->total_discount / $item->gross_sales) * 100;
-            return $item;
+        $discounts = $this->cachedResult('discounts_v6', $activePeriod, function() use ($branch, $periodIds) {
+            $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                ->whereIn('upload_histories.period_id', $periodIds)
+                ->where('sales.total', '>', 0)
+                ->select(
+                    DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle"),
+                    DB::raw('SUM(sales.gross_price) as gross_sales'),
+                    DB::raw('SUM(sales.disc_item + sales.disc_internal + sales.disc_external + sales.disc_invoice) as total_discount'),
+                    DB::raw('SUM(sales.total) as net_sales')
+                )
+                ->groupBy('principle')
+                ->having('gross_sales', '>', 0)
+                ->orderByDesc('net_sales');
+            
+            $this->applyBranchFilter($query, $branch);
+            return $query->get()->filter(fn($r) => $r->principle)->map(function($item) {
+                return [
+                    'principle' => $item->principle,
+                    'gross_sales' => (float)$item->gross_sales,
+                    'total_discount' => (float)$item->total_discount,
+                    'net_sales' => (float)$item->net_sales,
+                    'discount_ratio' => ($item->total_discount / ($item->gross_sales ?: 1)) * 100
+                ];
+            })->toArray();
         });
+
+        $discounts = collect($discounts)->map(fn($i) => (object)$i);
 
         return view('insights.discounts', [
             'data' => $discounts,
-            'selected_branch' => $branch
+            'selected_branch' => $branch,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
@@ -197,19 +276,25 @@ class InsightController extends Controller
     public function anomalies(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $anomalies = $this->getAnomaliesData($branch);
+        $activePeriod = $this->getSelectedPeriod($request);
+        $anomalies = $this->cachedResult('anomalies', $activePeriod, function() use ($branch, $activePeriod) {
+            return $this->getAnomaliesData($branch, $activePeriod);
+        });
 
         return view('insights.anomalies', [
             'data' => $anomalies,
-            'selected_branch' => $branch
+            'selected_branch' => $branch,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
-    private function getAnomaliesData($branch)
+    private function getAnomaliesData($branch, $period)
     {
+        [$startDate, $endDate] = $period->getRange();
         $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
             ->whereNotNull('transactions.meta')
-            ->where('transactions.transaction_date', '>=', $this->getCutoffDate())
+            ->whereBetween('transactions.transaction_date', [$startDate, $endDate])
             ->select(
 
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.sales_name')) as salesman"),
@@ -221,7 +306,7 @@ class InsightController extends Controller
         
         $this->applyBranchFilter($query, $branch);
         return $query->get()->filter(fn($r) => $r->salesman)->map(function($item) {
-            $item->return_rate = ($item->return_value / $item->gross_sales) * 100;
+            $item->return_rate = ($item->return_value / ($item->gross_sales ?: 1)) * 100;
             return $item;
         })->filter(function($item) {
             return $item->return_rate > 2;
@@ -233,6 +318,7 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $principle = $request->query('principle', 'all');
+        $activePeriod = $this->getSelectedPeriod($request);
 
         // Fetch Principles list for the filter
         $principles = Transaction::whereNotNull('meta')
@@ -243,27 +329,33 @@ class InsightController extends Controller
             ->sort()
             ->values();
 
-        $stockAlerts = $this->getStockForecastData($branch, $principle);
+        $stockAlerts = $this->cachedResult('stock_forecast', $activePeriod, function() use ($branch, $principle, $activePeriod) {
+            return $this->getStockForecastData($branch, $principle, $activePeriod);
+        });
 
         return view('insights.stock-forecast', [
             'data' => $stockAlerts,
             'selected_branch' => $branch,
             'selected_principle' => $principle,
-            'principles' => $principles
+            'principles' => $principles,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
-    private function getStockForecastData($branch, $principle = 'all')
+    private function getStockForecastData($branch, $principle = 'all', $period = null)
     {
+        $period = $period ?? $this->getSelectedPeriod(request());
+        [$startDate, $endDate] = $period->getRange();
+        $cutoff = $this->getCutoffDate($period);
+
         $query = Sale::join('products', 'sales.product_id', '=', 'products.id')
             ->join('transactions', 'sales.transaction_id', '=', 'transactions.id')
-            ->where('transactions.transaction_date', '>=', $this->getCutoffDate())
-            ->where('sales.total', '>', 0)
+            ->whereBetween('transactions.transaction_date', [$cutoff, $endDate])
             ->select(
                 'products.id', 'products.name',
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle_name"),
-                DB::raw('SUM(sales.qty) as total_qty_sold'),
-                DB::raw('COUNT(DISTINCT DATE(transactions.transaction_date)) as days_sold')
+                DB::raw('SUM(sales.qty) as total_qty_sold')
             )
             ->groupBy('products.id', 'products.name', 'principle_name')
             ->having('total_qty_sold', '>', 0);
@@ -282,14 +374,16 @@ class InsightController extends Controller
         $stockQuery = Stock::select('product_id', DB::raw('SUM(on_hand_base) as current_stock'))
             ->groupBy('product_id');
 
-        if ($branchCode) {
-            $latestUploadId = Stock::where('branch', $branchCode)->max('upload_history_id');
-            $stockQuery->where('branch', $branchCode)->where('upload_history_id', $latestUploadId);
-        } else {
-            // For ALL branches, we take the latest upload globally or per branch?
-            // Safer: Latest upload that contains ANY stock.
-            $latestUploadId = Stock::max('upload_history_id');
+        // Filter stock by latest upload in the SELECTED period
+        $latestUploadId = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $period->id))->max('upload_history_id');
+
+        if ($latestUploadId) {
             $stockQuery->where('upload_history_id', $latestUploadId);
+            if ($branchCode) {
+                $stockQuery->where('branch', $branchCode);
+            }
+        } else {
+            return []; // No stock data for this period
         }
         $currentStocks = $stockQuery->get()->keyBy('product_id');
 
@@ -300,7 +394,7 @@ class InsightController extends Controller
             if (!isset($currentStocks[$productId])) continue;
             $stock = $currentStocks[$productId]->current_stock;
             if ($stock <= 0) continue;
-            $avgDailySales = $salesData->total_qty_sold / max($salesData->days_sold, 1);
+            $avgDailySales = $salesData->total_qty_sold / 90;
             $daysToOos = $stock / $avgDailySales;
 
             if ($daysToOos <= 14) {
@@ -323,34 +417,49 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $principle = $request->query('principle', 'all');
+        $activePeriod = $this->getSelectedPeriod($request);
 
         $principles = Transaction::whereNotNull('meta')
             ->select(DB::raw("JSON_UNQUOTE(JSON_EXTRACT(meta, '$.principle_name')) as name"))
             ->distinct()
             ->pluck('name')->filter()->sort()->values();
 
-        $orderSuggestions = $this->getPurchaseOrderData($branch, $principle);
+        $orderSuggestions = $this->cachedResult('purchase_order_v5', $activePeriod, function() use ($branch, $principle, $activePeriod) {
+            return $this->getPurchaseOrderData($branch, $principle, $activePeriod);
+        });
 
         return view('insights.purchase-order', [
             'data' => $orderSuggestions,
             'selected_branch' => $branch,
             'selected_principle' => $principle,
-            'principles' => $principles
+            'principles' => $principles,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
-    private function getPurchaseOrderData($branch, $principle = 'all')
+    private function getPurchaseOrderData($branch, $principle = 'all', $period = null)
     {
-        $cutoff = $this->getCutoffDate();
-        $query = Sale::join('products', 'sales.product_id', '=', 'products.id')
-            ->join('transactions', 'sales.transaction_id', '=', 'transactions.id')
-            ->where('transactions.transaction_date', '>=', $cutoff)
-            ->where('sales.total', '>', 0)
+        $period = $period ?? $this->getSelectedPeriod(request());
+        $precedingIds = $period->getPrecedingIds(3);
+        if (count($precedingIds) < 3) return []; // Need at least 3 months history
+
+        // Correct sequence: Dec(m1), Jan(m2), Feb(m3) for March(period)
+        $p1 = Period::find($precedingIds[2]); // Dec
+        $p2 = Period::find($precedingIds[1]); // Jan
+        $p3 = Period::find($precedingIds[0]); // Feb
+
+        $query = Sale::join('transactions', 'sales.transaction_id', '=', 'transactions.id')
+            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->join('products', 'sales.product_id', '=', 'products.id')
+            ->whereIn('upload_histories.period_id', $precedingIds)
             ->select(
                 'products.id', 'products.name',
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle_name"),
                 DB::raw('SUM(sales.qty) as total_qty_sold'),
-                DB::raw('COUNT(DISTINCT DATE(transactions.transaction_date)) as days_sold')
+                DB::raw("SUM(CASE WHEN upload_histories.period_id = {$p1->id} THEN sales.qty ELSE 0 END) as qty_m1"),
+                DB::raw("SUM(CASE WHEN upload_histories.period_id = {$p2->id} THEN sales.qty ELSE 0 END) as qty_m2"),
+                DB::raw("SUM(CASE WHEN upload_histories.period_id = {$p3->id} THEN sales.qty ELSE 0 END) as qty_m3")
             )
             ->groupBy('products.id', 'products.name', 'principle_name');
         
@@ -366,12 +475,15 @@ class InsightController extends Controller
 
         $stockQuery = Stock::select('product_id', DB::raw('SUM(on_hand_base) as current_stock'))->groupBy('product_id');
         
-        if ($branchCode) {
-            $latestUploadId = Stock::where('branch', $branchCode)->max('upload_history_id');
-            $stockQuery->where('branch', $branchCode)->where('upload_history_id', $latestUploadId);
-        } else {
-            $latestUploadId = Stock::max('upload_history_id');
+        $latestUploadId = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $period->id))->max('upload_history_id');
+
+        if ($latestUploadId) {
             $stockQuery->where('upload_history_id', $latestUploadId);
+            if ($branchCode) {
+                $stockQuery->where('branch', $branchCode);
+            }
+        } else {
+            return [];
         }
         $currentStocks = $stockQuery->get()->keyBy('product_id');
 
@@ -380,13 +492,21 @@ class InsightController extends Controller
         $results = [];
         foreach ($salesVelocity as $productId => $salesData) {
             $stock = isset($currentStocks[$productId]) ? $currentStocks[$productId]->current_stock : 0;
-            $avgDaily = $salesData->total_qty_sold / max($salesData->days_sold, 1);
+            $avgDaily = $salesData->total_qty_sold / 90;
+            $avgMonthly = $salesData->total_qty_sold / 3;
             
             $results[] = (object) [
                 'product_name' => $salesData->name,
                 'principle_name' => $salesData->principle_name,
                 'current_stock' => $stock,
-                'avg_daily' => (float) $avgDaily
+                'avg_daily' => (float) $avgDaily,
+                'avg_monthly' => (float) $avgMonthly,
+                'm1_name' => \Carbon\Carbon::create($p1->year, $p1->month, 1)->translatedFormat('M y'),
+                'm2_name' => \Carbon\Carbon::create($p2->year, $p2->month, 1)->translatedFormat('M y'),
+                'm3_name' => \Carbon\Carbon::create($p3->year, $p3->month, 1)->translatedFormat('M y'),
+                'qty_m1' => (float) ($salesData->qty_m1 ?? 0),
+                'qty_m2' => (float) ($salesData->qty_m2 ?? 0),
+                'qty_m3' => (float) ($salesData->qty_m3 ?? 0)
             ];
         }
         return $results;
@@ -397,19 +517,28 @@ class InsightController extends Controller
     public function deadStock(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $deadStock = $this->getDeadStockData($branch);
+        $activePeriod = $this->getSelectedPeriod($request);
+        [$startDate, $endDate] = $this->get3MonthRange($activePeriod);
+        $deadStock = $this->cachedResult('dead_stock_3m', $activePeriod, function() use ($branch, $activePeriod, $startDate, $endDate) {
+            return $this->getDeadStockData($branch, $activePeriod);
+        });
 
         return view('insights.dead-stock', [
             'data' => $deadStock,
-            'selected_branch' => $branch
+            'selected_branch' => $branch,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
-    private function getDeadStockData($branch)
+    private function getDeadStockData($branch, $period = null)
     {
-        $cutoff = $this->getCutoffDate();
+        $period = $period ?? $this->getSelectedPeriod(request());
+        $precedingIds = $period->getPrecedingIds(3);
+
         $soldProductIds = Sale::join('transactions', 'sales.transaction_id', '=', 'transactions.id')
-            ->where('transactions.transaction_date', '>=', $cutoff)
+            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->whereIn('upload_histories.period_id', $precedingIds)
             ->distinct()->pluck('sales.product_id')->toArray();
 
         $query = Stock::join('products', 'stocks.product_id', '=', 'products.id')
@@ -427,12 +556,15 @@ class InsightController extends Controller
         $stockMap = ['OBM_01' => 'bjm', 'OBM_02' => 'brb', 'OBM_03' => 'btl'];
         $branchCode = ($branch !== 'all') ? ($stockMap[$branch] ?? $branch) : null;
         
-        if ($branchCode) {
-            $latestUploadId = Stock::where('branch', $branchCode)->max('upload_history_id');
-            $query->where('stocks.branch', $branchCode)->where('stocks.upload_history_id', $latestUploadId);
-        } else {
-            $latestUploadId = Stock::max('upload_history_id');
+        $latestUploadId = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $period->id))->max('upload_history_id');
+        
+        if ($latestUploadId) {
             $query->where('stocks.upload_history_id', $latestUploadId);
+            if ($branchCode) {
+                $query->where('stocks.branch', $branchCode);
+            }
+        } else {
+            return collect();
         }
 
         return $query->get();
@@ -442,14 +574,18 @@ class InsightController extends Controller
     public function growth(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $latestDate = Transaction::max('transaction_date');
-        $d0 = Carbon::parse($latestDate);
-        $d7 = $d0->copy()->subDays(7);
-        $d14 = $d0->copy()->subDays(14);
+        $activePeriod = $this->getSelectedPeriod($request);
+        [$startDate, $endDate] = $activePeriod->getRange();
 
-        $fetchGrowth = function($start, $end) use ($branch) {
+        // Comparison: This Month vs Last Month
+        $prevPeriod = \App\Models\Period::where('year', ($activePeriod->month == 1 ? $activePeriod->year - 1 : $activePeriod->year))
+            ->where('month', ($activePeriod->month == 1 ? 12 : $activePeriod->month - 1))
+            ->first();
+
+        $fetchGrowth = function($pIds) use ($branch) {
             $q = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-                ->whereBetween('transactions.transaction_date', [$start, $end])
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                ->whereIn('upload_histories.period_id', $pIds)
                 ->select(
                     DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle"),
                     DB::raw('SUM(sales.total) as total')
@@ -459,35 +595,46 @@ class InsightController extends Controller
             return $q->get()->keyBy('principle');
         };
 
-        $currentWeek = $fetchGrowth($d7->toDateString(), $d0->toDateString());
-        $previousWeek = $fetchGrowth($d14->toDateString(), $d7->copy()->subDay()->toDateString());
+        $reportData = $this->cachedResult('growth_v5', $activePeriod, function() use ($branch, $activePeriod, $prevPeriod, $fetchGrowth) {
+            $currentMonth = $fetchGrowth([$activePeriod->id]);
+            
+            $previousMonth = collect();
+            if ($prevPeriod) {
+                $previousMonth = $fetchGrowth([$prevPeriod->id]);
+            }
 
-        $principleGrowth = [];
-        foreach ($currentWeek as $p => $curr) {
-            $prevTotal = $previousWeek[$p]->total ?? 0;
-            $growth = $prevTotal > 0 ? (($curr->total - $prevTotal) / $prevTotal) * 100 : 100;
-            $principleGrowth[] = (object) [
-                'principle' => $p,
-                'current' => $curr->total,
-                'previous' => $prevTotal,
-                'growth' => round($growth, 1)
-            ];
-        }
-        usort($principleGrowth, fn($a, $b) => $b->growth <=> $a->growth);
+            $results = [];
+            foreach ($currentMonth as $p => $curr) {
+                $prevTotal = $previousMonth[$p]->total ?? 0;
+                $growth = $prevTotal > 0 ? (($curr->total - $prevTotal) / $prevTotal) * 100 : 100;
+                $results[] = (object) [
+                    'principle' => $p,
+                    'current' => $curr->total,
+                    'previous' => $prevTotal,
+                    'growth' => round($growth, 1)
+                ];
+            }
+            usort($results, fn($a, $b) => $b->growth <=> $a->growth);
+            return $results;
+        });
 
         return view('insights.growth', [
-            'data' => $principleGrowth,
-            'selected_branch' => $branch
+            'data' => $reportData,
+            'selected_branch' => $branch,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
     public function principalReport(Request $request)
     {
         $branch = $this->getBranchFilter($request);
-        $cutoff = $this->getCutoffDate();
+        $activePeriod = $this->getSelectedPeriod($request);
+        [$startDate, $endDate] = $this->get3MonthRange($activePeriod);
+        $cutoff = $this->getCutoffDate($activePeriod);
         
-        // Fetch all possible principles for the dropdown
-        $principles = Transaction::where('transaction_date', '>=', $cutoff)
+        // Fetch all possible principles for the dropdown within the 90-day window
+        $principles = Transaction::whereBetween('transaction_date', [$startDate, $endDate])
             ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) as name'))
             ->distinct()->pluck('name')->filter(fn($n) => !empty($n) && $n !== 'Principle Name')->sort()->values();
 
@@ -498,116 +645,133 @@ class InsightController extends Controller
                 'data' => null,
                 'principles' => $principles,
                 'selected_branch' => $branch,
-                'selected_principle' => null
+                'selected_principle' => null,
+                'activePeriod' => $activePeriod,
+                'allPeriods' => \App\Models\Period::ordered()->get()
             ]);
         }
 
-        // Find the Principle ID for the selected name to unify variants (e.g. Fortuna vs Fritolay)
-        $principleId = Transaction::where('transaction_date', '>=', $cutoff)
-            ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) = ?', [$selectedPrinciple])
-            ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_id")) as pid'))
-            ->value('pid');
+        $reportData = $this->cachedResult('principal_report', $activePeriod, function() use ($selectedPrinciple, $branch, $startDate, $endDate, $activePeriod, $cutoff, $principles) {
+            // Find the Principle ID for the selected name
+            $principleId = Transaction::whereBetween('transaction_date', [$startDate, $endDate])
+                ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) = ?', [$selectedPrinciple])
+                ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_id")) as pid'))
+                ->value('pid');
 
-        // 1. Summary Metrics
-        $queryBase = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-            ->where('transactions.transaction_date', '>=', $cutoff);
-        
-        if ($principleId) {
-            $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
-        } else {
-            $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
-        }
-        
-        $this->applyBranchFilter($queryBase, $branch);
-
-        $summary = (clone $queryBase)->select(
-            DB::raw('SUM(CASE WHEN sales.total > 0 THEN sales.total ELSE 0 END) as gross_value'),
-            DB::raw('ABS(SUM(CASE WHEN sales.total < 0 THEN sales.total ELSE 0 END)) as return_value'),
-            DB::raw('SUM(sales.total) as net_value'),
-            DB::raw('SUM(sales.qty) as total_qty'),
-            DB::raw('COUNT(DISTINCT transactions.outlet_id) as total_outlets')
-        )->first();
-
-        // 2. Trend (Weekly)
-        $trend = (clone $queryBase)->select(
-            DB::raw('DATE_FORMAT(transactions.transaction_date, "%Y-%u") as week'),
-            DB::raw('MIN(transactions.transaction_date) as week_start'),
-            DB::raw('SUM(sales.total) as total')
-        )->groupBy('week')->orderBy('week')->get();
-
-        // 3. Top Products
-        $topProducts = (clone $queryBase)->join('products', 'sales.product_id', '=', 'products.id')
-            ->select('products.name', DB::raw('SUM(sales.total) as value'), DB::raw('SUM(sales.qty) as qty'))
-            ->groupBy('products.id', 'products.name')
-            ->orderByDesc('value')->limit(10)->get();
-
-        // 4. Top Outlets
-        $topOutlets = (clone $queryBase)->join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
-            ->select('outlets.name', DB::raw('SUM(sales.total) as value'))
-            ->groupBy('outlets.id', 'outlets.name')
-            ->orderByDesc('value')->limit(10)->get();
-
-        // 5. Salesman Performance
-        $topSalesmen = (clone $queryBase)
-            ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.sales_name")) as name'), DB::raw('SUM(sales.total) as value'))
-            ->groupBy('name')->orderByDesc('value')->get();
-
-        // 6. City Analysis
-        $cityAnalysis = (clone $queryBase)->join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
-            ->select('outlets.city', DB::raw('SUM(sales.total) as value'))
-            ->whereNotNull('outlets.city')
-            ->groupBy('outlets.city')->orderByDesc('value')->get();
-
-        // 7. Growth (Current 30 vs Prev 30)
-        $d30 = Carbon::parse($cutoff)->addDays(60); // Roughly 30 days from now back to 60 days ago
-        $now = Carbon::parse($cutoff)->addDays(90);
-        $d60 = Carbon::parse($cutoff)->addDays(30);
-
-        $curr30 = (clone $queryBase)->whereBetween('transactions.transaction_date', [$d30->toDateString(), $now->toDateString()])->sum('sales.total');
-        $prev30 = (clone $queryBase)->whereBetween('transactions.transaction_date', [$d60->toDateString(), $d30->subDay()->toDateString()])->sum('sales.total');
-        $growth30 = ($prev30 > 0) ? (($curr30 - $prev30) / $prev30) * 100 : (($curr30 > 0) ? 0 : 0); // Reset growth if no previous data
-
-        // 8. Sleeper Outlets (Top Brand Customers missing for 14+ days)
-        $rfmNow = Carbon::parse($now);
-        $lastOrders = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-            ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
-            ->select('transactions.outlet_id', DB::raw('MAX(transactions.transaction_date) as last_date'), DB::raw('SUM(sales.total) as total_contribution'))
-            ->groupBy('transactions.outlet_id')
-            ->orderByDesc('total_contribution')->limit(50)->get();
-        
-        $sleepers = $lastOrders->filter(function($o) use ($rfmNow) {
-            return Carbon::parse($o->last_date)->diffInDays($rfmNow) > 14;
-        })->take(5);
-        if ($sleepers->count() > 0) {
-            $sleeperIds = $sleepers->pluck('outlet_id')->toArray();
-            $sleeperDetails = Outlet::whereIn('id', $sleeperIds)->get()->keyBy('id');
-            foreach($sleepers as $s) {
-                $s->name = $sleeperDetails[$s->outlet_id]->name ?? 'Unknown';
-                $s->days = Carbon::parse($s->last_date)->diffInDays($rfmNow);
+            // 1. Summary Metrics
+            $queryBase = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                ->whereBetween('transactions.transaction_date', [$startDate, $endDate]);
+            
+            if ($principleId) {
+                $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
+            } else {
+                $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
             }
-        }
+            
+            $this->applyBranchFilter($queryBase, $branch);
 
-        // 9. Product Return Audit
-        $returns = (clone $queryBase)->join('products', 'sales.product_id', '=', 'products.id')
-            ->where('sales.total', '<', 0)
-            ->select('products.name', DB::raw('ABS(SUM(sales.total)) as value'), DB::raw('ABS(SUM(sales.qty)) as qty'))
-            ->groupBy('products.id', 'products.name')
-            ->orderByDesc('value')->limit(5)->get();
+            $summary = (clone $queryBase)->select(
+                DB::raw('SUM(CASE WHEN sales.total > 0 THEN sales.total ELSE 0 END) as gross_value'),
+                DB::raw('ABS(SUM(CASE WHEN sales.total < 0 THEN sales.total ELSE 0 END)) as return_value'),
+                DB::raw('SUM(sales.total) as net_value'),
+                DB::raw('SUM(sales.qty) as total_qty'),
+                DB::raw('COUNT(DISTINCT transactions.outlet_id) as total_outlets')
+            )->first();
+
+            // 2. Trend (Weekly)
+            $trend = (clone $queryBase)->select(
+                DB::raw('DATE_FORMAT(transactions.transaction_date, "%Y-%u") as week'),
+                DB::raw('MIN(transactions.transaction_date) as week_start'),
+                DB::raw('SUM(sales.total) as total')
+            )->groupBy('week')->orderBy('week')->get();
+
+            // 3. Top Products
+            $topProducts = (clone $queryBase)->join('products', 'sales.product_id', '=', 'products.id')
+                ->select('products.name', DB::raw('SUM(sales.total) as value'), DB::raw('SUM(sales.qty) as qty'))
+                ->groupBy('products.id', 'products.name')
+                ->orderByDesc('value')->limit(10)->get();
+
+            // 4. Top Outlets
+            $topOutlets = (clone $queryBase)->join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
+                ->select('outlets.name', DB::raw('SUM(sales.total) as value'))
+                ->groupBy('outlets.id', 'outlets.name')
+                ->orderByDesc('value')->limit(10)->get();
+
+            // 5. Salesman Performance
+            $topSalesmen = (clone $queryBase)
+                ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.sales_name")) as name'), DB::raw('SUM(sales.total) as value'))
+                ->groupBy('name')->orderByDesc('value')->get();
+
+            // 6. City Analysis
+            $cityAnalysis = (clone $queryBase)->join('outlets', 'transactions.outlet_id', '=', 'outlets.id')
+                ->select('outlets.city', DB::raw('SUM(sales.total) as value'))
+                ->whereNotNull('outlets.city')
+                ->groupBy('outlets.city')->orderByDesc('value')->get();
+
+            // 7. Growth (Current Month vs Last Month)
+            $prevPeriod = \App\Models\Period::where('year', ($activePeriod->month == 1 ? $activePeriod->year - 1 : $activePeriod->year))
+                ->where('month', ($activePeriod->month == 1 ? 12 : $activePeriod->month - 1))
+                ->first();
+            
+            $currVal = $summary->net_value ?? 0;
+            $prevVal = 0;
+            if ($prevPeriod) {
+                [$pStart, $pEnd] = $prevPeriod->getRange();
+                $prevVal = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                    ->whereBetween('transactions.transaction_date', [$pStart, $pEnd])
+                    ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
+                    ->sum('sales.total');
+            }
+
+            $growthVal = ($prevVal > 0) ? (($currVal - $prevVal) / $prevVal) * 100 : (($currVal > 0) ? 100 : 0);
+
+            // 8. Sleeper Outlets
+            $rfmNow = Carbon::parse($endDate);
+            $lastOrders = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
+                ->where('transactions.transaction_date', '<=', $endDate)
+                ->select('transactions.outlet_id', DB::raw('MAX(transactions.transaction_date) as last_date'), DB::raw('SUM(sales.total) as total_contribution'))
+                ->groupBy('transactions.outlet_id')
+                ->orderByDesc('total_contribution')->limit(50)->get();
+            
+            $sleepers = $lastOrders->filter(function($o) use ($rfmNow) {
+                return Carbon::parse($o->last_date)->diffInDays($rfmNow) > 14;
+            })->take(5);
+            if ($sleepers->count() > 0) {
+                $sleeperIds = $sleepers->pluck('outlet_id')->toArray();
+                $sleeperDetails = \App\Models\Outlet::whereIn('id', $sleeperIds)->get()->keyBy('id');
+                foreach($sleepers as $s) {
+                    $s->name = $sleeperDetails[$s->outlet_id]->name ?? 'Unknown';
+                    $s->days = Carbon::parse($s->last_date)->diffInDays($rfmNow);
+                }
+            }
+
+            // 9. Product Return Audit
+            $returns = (clone $queryBase)->join('products', 'sales.product_id', '=', 'products.id')
+                ->where('sales.total', '<', 0)
+                ->select('products.name', DB::raw('ABS(SUM(sales.total)) as value'), DB::raw('ABS(SUM(sales.qty)) as qty'))
+                ->groupBy('products.id', 'products.name')
+                ->orderByDesc('value')->limit(5)->get();
+
+            return compact('summary', 'trend', 'topProducts', 'topOutlets', 'topSalesmen', 'cityAnalysis', 'growthVal', 'currVal', 'sleepers', 'returns');
+        });
 
         return view('insights.principal-report', [
             'principles' => $principles,
             'selected_principle' => $selectedPrinciple,
             'selected_branch' => $branch,
-            'summary' => $summary,
-            'trend' => $trend,
-            'topProducts' => $topProducts,
-            'topOutlets' => $topOutlets,
-            'topSalesmen' => $topSalesmen,
-            'cityAnalysis' => $cityAnalysis,
-            'growth30' => round($growth30, 1),
-            'curr30' => $curr30,
-            'sleepers' => $sleepers,
-            'returns' => $returns
+            'summary' => $reportData['summary'],
+            'trend' => $reportData['trend'],
+            'topProducts' => $reportData['topProducts'],
+            'topOutlets' => $reportData['topOutlets'],
+            'topSalesmen' => $reportData['topSalesmen'],
+            'cityAnalysis' => $reportData['cityAnalysis'],
+            'growth30' => round($reportData['growthVal'], 1),
+            'curr30' => $reportData['currVal'],
+            'sleepers' => $reportData['sleepers'],
+            'returns' => $reportData['returns'],
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 

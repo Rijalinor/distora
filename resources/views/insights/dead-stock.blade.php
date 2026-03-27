@@ -1,14 +1,25 @@
 @extends('layouts.app')
 @section('title', 'Analisis Produk Mati')
 @section('content')
-<div class="mb-4 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+<div class="mb-4 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
     <div>
-        <a href="{{ route('insights.index') }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">← Kembali</a>
+        <a href="{{ route('insights.index', ['branch' => $selected_branch, 'period_id' => $activePeriod->id]) }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">← Kembali</a>
         <h1 style="font-size: 1.5rem; font-weight: 700;">❄️ Analisis Produk "Mati" (Dead Stock)</h1>
-        <p style="color: var(--text-muted); font-size: 0.9rem;">Produk yang mengendap di gudang tanpa penjualan sama sekali dalam <strong>90 Hari Terakhir</strong>.</p>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Produk yang mengendap di gudang tanpa penjualan sama sekali periode <strong>{{ $activePeriod->name }}</strong>.</p>
     </div>
 
     <form method="GET" action="{{ route('insights.dead-stock') }}" style="display: flex; gap: 0.75rem; align-items: center; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
+        <label for="period_id" style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Periode:</label>
+        <select name="period_id" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--accent-hover); font-weight: 800; outline: none; cursor: pointer;">
+            @foreach($allPeriods as $p)
+                <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                    {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                </option>
+            @endforeach
+        </select>
+        
+        <div style="width: 1px; height: 20px; background: var(--border);"></div>
+
         <label for="branch" style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Wilayah:</label>
         <select name="branch" id="branch" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
             <option value="all" {{ $selected_branch === 'all' ? 'selected' : '' }}>Semua Cabang</option>

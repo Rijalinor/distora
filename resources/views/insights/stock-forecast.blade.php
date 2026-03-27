@@ -4,16 +4,30 @@
 
 @section('content')
 <div class="mb-4">
-    <a href="{{ route('insights.index') }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+    <a href="{{ route('insights.index', ['branch' => $selected_branch, 'period_id' => $activePeriod->id]) }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
         ← Kembali ke Pusat Kendali
     </a>
-    <div class="d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
         <div>
             <h1 style="font-size: 1.5rem; font-weight: 700;">🚨 Monitoring Stok Kritis</h1>
-            <p style="color: var(--text-muted); font-size: 0.9rem;">Analisis 90 hari terakhir untuk memantau barang yang segera habis.</p>
+            <p style="color: var(--text-muted); font-size: 0.9rem;">Analisis <strong>3 bulan terakhir</strong> (hingga {{ $activePeriod->name }}) untuk memantau barang yang segera habis.</p>
         </div>
         
-        <form method="GET" action="{{ route('insights.stock-forecast') }}" style="display: flex; gap: 1rem; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
+        <form method="GET" action="{{ route('insights.stock-forecast') }}" style="display: flex; gap: 1rem; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border); flex-wrap: wrap;">
+            <!-- Filter Periode -->
+            <div style="display: flex; flex-direction: column;">
+                <label style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Periode</label>
+                <select name="period_id" onchange="this.form.submit()" style="padding: 0.2rem; border: none; background: transparent; color: var(--accent-hover); font-weight: 800; outline: none; cursor: pointer;">
+                    @foreach($allPeriods as $p)
+                        <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                            {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
+
+            <div style="width: 1px; background: var(--border); margin: 0.3rem 0;"></div>
+
             <!-- Filter Cabang -->
             <div style="display: flex; flex-direction: column;">
                 <label style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Wilayah</label>

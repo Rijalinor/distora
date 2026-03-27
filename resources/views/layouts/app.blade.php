@@ -330,15 +330,16 @@
             <nav class="app-nav">
                 @if(auth()->check())
                     @if(auth()->user()->role === 'admin')
-                        <a href="{{ route('dashboard') }}" class="{{ request()->routeIs('dashboard*') ? 'active' : '' }}">Dashboard</a>
-                        <a href="{{ route('analytics.index') }}" class="{{ request()->routeIs('analytics.*') ? 'active' : '' }}">📈 Analytics</a>
-                        <a href="{{ route('insights.index') }}" class="{{ request()->routeIs('insights.*') ? 'active' : '' }}">💡 Keputusan</a>
-                        <a href="{{ route('targets.index') }}" class="{{ request()->routeIs('targets.*') ? 'active' : '' }}">🎯 Target KPI</a>
-                        <a href="{{ route('reports.sales-summary') }}" class="{{ request()->routeIs('reports.*') ? 'active' : '' }}">📊 Laporan</a>
+                        @php $periodParam = request()->query('period_id') ? ['period_id' => request()->query('period_id')] : []; @endphp
+                        <a href="{{ route('dashboard', $periodParam) }}" class="{{ request()->routeIs('dashboard*') ? 'active' : '' }}">Dashboard</a>
+                        <a href="{{ route('analytics.index', $periodParam) }}" class="{{ request()->routeIs('analytics.*') ? 'active' : '' }}">📈 Analytics</a>
+                        <a href="{{ route('insights.index', $periodParam) }}" class="{{ request()->routeIs('insights.*') ? 'active' : '' }}">💡 Keputusan</a>
+                        <a href="{{ route('targets.index', $periodParam) }}" class="{{ request()->routeIs('targets.*') ? 'active' : '' }}">🎯 Target KPI</a>
+                        <a href="{{ route('reports.sales-summary', $periodParam) }}" class="{{ request()->routeIs('reports.*') ? 'active' : '' }}">📊 Laporan</a>
                         <a href="{{ route('reset.index') }}" class="{{ request()->routeIs('reset.*') ? 'active' : '' }}" style="color: {{ request()->routeIs('reset.*') ? 'var(--warning)' : '' }}">📒 Tutup Buku</a>
                         <a href="{{ route('users.index') }}" class="{{ request()->routeIs('users.*') ? 'active' : '' }}">👥 User</a>
                     @else
-                        <a href="{{ route('dashboard') }}" class="{{ request()->routeIs('dashboard*') ? 'active' : '' }}">📊 Dashboard Saya</a>
+                        <a href="{{ route('dashboard', request()->query('period_id') ? ['period_id' => request()->query('period_id')] : []) }}" class="{{ request()->routeIs('dashboard*') ? 'active' : '' }}">📊 Dashboard Saya</a>
                     @endif
                     
                     <div class="nav-divider" style="width: 1px; background: var(--border); margin: 0 0.5rem; align-self: stretch;"></div>

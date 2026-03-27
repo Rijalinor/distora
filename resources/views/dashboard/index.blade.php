@@ -3,29 +3,47 @@
 @section('title', 'Dashboard')
 
 @section('content')
-    <!-- Active Period -->
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <!-- Active Period & Selector -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
         <div>
             <h1 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.25rem;">Dashboard</h1>
-            <span style="color: var(--text-muted); font-size: 0.875rem;">Periode aktif: <strong style="color: var(--accent-hover);">{{ $activePeriod->name }}</strong></span>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <select onchange="window.location.href='{{ route('dashboard') }}?period_id=' + this.value" class="btn btn-ghost btn-sm" style="font-weight: 700; color: var(--accent-hover); background: var(--bg-card);">
+                    @foreach($allPeriods as $p)
+                        <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                            {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                        </option>
+                    @endforeach
+                </select>
+                @if($activePeriod->status === 'closed')
+                    <span class="badge badge-warning" style="font-size: 0.7rem;"><span class="badge-dot"></span> Historical View</span>
+                @else
+                    <span class="badge badge-success" style="font-size: 0.7rem;"><span class="badge-dot"></span> Active Period</span>
+                @endif
+            </div>
         </div>
         @if(auth()->user()->role === 'admin')
-        <a href="{{ route('reset.index') }}" class="btn btn-ghost btn-sm">📒 Tutup Buku</a>
+        <div style="display: flex; gap: 0.5rem;">
+            <a href="{{ route('reset.index') }}" class="btn btn-ghost btn-sm">⚙️ Kelola Periode</a>
+            @if($activePeriod->status === 'active')
+            <a href="{{ route('reset.index') }}?period_id={{ $activePeriod->id }}" class="btn btn-danger btn-sm" style="background: var(--warning-bg); color: var(--warning); border-color: rgba(245, 158, 11, 0.2);">📒 Tutup Buku</a>
+            @endif
+        </div>
         @endif
     </div>
 
     <!-- Stats -->
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-label">Total Upload</div>
+            <div class="stat-label">Total Upload ({{ $activePeriod->name }})</div>
             <div class="stat-value">{{ number_format($stats['total_uploads']) }}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Outlets</div>
+            <div class="stat-label">Outlets Aktif</div>
             <div class="stat-value">{{ number_format($stats['outlets']) }}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Products</div>
+            <div class="stat-label">Products Terjual</div>
             <div class="stat-value">{{ number_format($stats['products']) }}</div>
         </div>
         <div class="stat-card">
@@ -33,23 +51,35 @@
             <div class="stat-value">{{ number_format($stats['transactions']) }}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Sales</div>
+            <div class="stat-label">Sales Logs</div>
             <div class="stat-value">{{ number_format($stats['sales']) }}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Stok</div>
+            <div class="stat-label">Stok Records</div>
             <div class="stat-value">{{ number_format($stats['stocks']) }}</div>
         </div>
     </div>
 
     @if(auth()->user()->role === 'admin')
     <!-- Upload Zone -->
-    <h2 class="section-title">📤 Upload File Excel</h2>
+    <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1rem;">
+        <h2 class="section-title" style="margin-bottom: 0;">📤 Upload File Excel</h2>
+        @if($activePeriod->status === 'closed')
+             <span style="color: var(--danger); font-size: 0.8rem; font-weight: 600;">⚠️ Periode ini sudah ditutup. Upload baru mungkin tidak disarankan.</span>
+        @endif
+    </div>
+
+    <div style="margin-bottom: 1rem; display: none;">
+        <select id="periodSelect">
+            <option value="{{ $activePeriod->id }}" selected>{{ $activePeriod->name }}</option>
+        </select>
+    </div>
+
     <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
-        <div class="upload-zone-icon">📁</div>
+        <div class="upload-zone-icon">📤</div>
         <div class="upload-zone-text">
             <strong>Klik untuk pilih file</strong> atau drag & drop ke sini<br>
-            <small style="color: var(--text-muted)">Format: .xlsx, .xls, .csv — Maks 20MB</small>
+            <small style="color: var(--text-muted)">Format: .xlsx, .xls, .csv — Maks 50MB</small>
         </div>
         <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
     </div>
@@ -175,6 +205,7 @@
     function uploadFile(file) {
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('period_id', document.getElementById('periodSelect').value);
 
         uploadFileName.textContent = file.name;
         uploadProgress.classList.add('active');

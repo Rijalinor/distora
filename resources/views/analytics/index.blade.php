@@ -2,44 +2,60 @@
 @section('title', 'Analytics & Visualisasi')
 
 @section('content')
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
         <div>
             <h1 style="font-size: 1.5rem; font-weight: 700;">📈 Analytics & Visualisasi</h1>
             <p style="color: var(--text-muted); font-size: 0.95rem;">Insight mendalam tentang performa bisnis</p>
         </div>
-        <div>
+        <div style="display: flex; gap: 0.75rem; align-items: center;">
+            <!-- Period Selector -->
+            <select onchange="window.location.href='{{ route('analytics.index') }}?branch={{ $branch }}&period_id=' + this.value" style="padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--accent-hover); font-weight: 700; cursor: pointer; outline: none;">
+                @foreach($allPeriods as $p)
+                    <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                        {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                    </option>
+                @endforeach
+            </select>
+
             <form id="branchFilterForm" action="{{ route('analytics.index') }}" method="GET">
+                <input type="hidden" name="period_id" value="{{ $activePeriod->id }}">
                 <select name="branch" onchange="document.getElementById('branchFilterForm').submit()" style="padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-weight: 500; cursor: pointer; outline: none;">
-                    <option value="all" {{ request('branch') == 'all' ? 'selected' : '' }}>Semua Cabang</option>
-                    <option value="OBM_01" {{ request('branch') == 'OBM_01' ? 'selected' : '' }}>📌 Banjarmasin (OBM_01)</option>
-                    <option value="OBM_02" {{ request('branch') == 'OBM_02' ? 'selected' : '' }}>📌 Barabai (OBM_02)</option>
-                    <option value="OBM_03" {{ request('branch') == 'OBM_03' ? 'selected' : '' }}>📌 Batulicin (OBM_03)</option>
+                    <option value="all" {{ $branch == 'all' ? 'selected' : '' }}>Semua Cabang</option>
+                    <option value="OBM_01" {{ $branch == 'OBM_01' ? 'selected' : '' }}>📌 Banjarmasin (OBM_01)</option>
+                    <option value="OBM_02" {{ $branch == 'OBM_02' ? 'selected' : '' }}>📌 Barabai (OBM_02)</option>
+                    <option value="OBM_03" {{ $branch == 'OBM_03' ? 'selected' : '' }}>📌 Batulicin (OBM_03)</option>
                 </select>
             </form>
         </div>
     </div>
-
+ 
     <!-- Summary KPI -->
     <div class="stats-grid" style="margin-bottom: 2rem;">
         <div class="stat-card">
-            <div class="stat-label">Pendapatan Bersih</div>
-            <div class="stat-value" style="color: #6366f1;">Rp {{ number_format($summary['net_sales'], 0, ',', '.') }}</div>
+            <div class="stat-label">Pendapatan Bersih (Net)</div>
+            <div class="stat-value" style="color: #6366f1;">Rp {{ number_format($netSales, 0, ',', '.') }}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Penjualan</div>
-            <div class="stat-value text-success">Rp {{ number_format($summary['total_sales'], 0, ',', '.') }}</div>
+            <div class="stat-label">Total Penjualan (Gross)</div>
+            <div class="stat-value text-success">Rp {{ number_format($totalSales, 0, ',', '.') }}</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Total Return</div>
-            <div class="stat-value text-danger">Rp {{ number_format($summary['total_returns'], 0, ',', '.') }}</div>
+            <div class="stat-value text-danger">Rp {{ number_format($totalSales - $netSales, 0, ',', '.') }}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Rata-rata/Hari</div>
-            <div class="stat-value">Rp {{ number_format($summary['avg_daily_sales'], 0, ',', '.') }}</div>
+            <div class="stat-label">Produk Terjual</div>
+            <div class="stat-value">{{ number_format($totalProducts) }}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Transaksi</div>
-            <div class="stat-value">{{ number_format($summary['total_transactions']) }}</div>
+            <div class="stat-label">Status Periode</div>
+            <div class="stat-value" style="font-size: 1.25rem !important;">
+                @if($activePeriod->status === 'active')
+                    <span style="color: var(--success);">ACTIVE</span>
+                @else
+                    <span style="color: var(--warning);">CLOSED</span>
+                @endif
+            </div>
         </div>
     </div>
 
@@ -81,7 +97,7 @@
                 <p style="font-size: 0.9rem; color: var(--text-secondary); margin: 0; line-height: 1.5;">
                     Dari total <strong>{{ number_format($totalProducts) }}</strong> produk,<br> 
                     <strong style="color: var(--success);">Kelas A (Prioritas): {{ number_format($paretoCount80) }} produk</strong> pertama 
-                    (sekitar {{ number_format(($paretoCount80/$totalProducts)*100, 1) }}%) 
+                    (sekitar {{ $totalProducts > 0 ? number_format(($paretoCount80/$totalProducts)*100, 1) : 0 }}%) 
                     menyumbang <strong>80%</strong> total pendapatan.
                 </p>
             </div>

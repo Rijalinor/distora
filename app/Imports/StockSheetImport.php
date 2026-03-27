@@ -7,10 +7,15 @@ use App\Models\Product;
 use App\Models\Stock;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\SkipsEmptyRows;
-use Maatwebsite\Excel\Concerns\ToCollection;
+use Maatwebsite\Excel\Concerns\ToModel;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
+use Maatwebsite\Excel\Concerns\WithChunkReading;
+use Maatwebsite\Excel\Concerns\WithBatchInserts;
+use Maatwebsite\Excel\Concerns\WithEvents;
+use Maatwebsite\Excel\Events\AfterImport;
+use Maatwebsite\Excel\Events\AfterSheet;
 
-class StockSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
+class StockSheetImport implements ToModel, WithHeadingRow, SkipsEmptyRows, WithChunkReading, WithBatchInserts, WithEvents
 {
     protected int $uploadHistoryId;
     protected string $branch;
@@ -24,18 +29,35 @@ class StockSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
         $this->branch = $branch;
     }
 
-    public function collection(Collection $rows): void
+    public function chunkSize(): int
     {
-        foreach ($rows as $row) {
-            $this->rowNumber++;
+        return 500;
+    }
 
-            try {
-                $this->processRow($row);
-                $this->successRows++;
-            } catch (\Throwable $e) {
-                $this->failedRows++;
-                $this->logError($e->getMessage(), $row->toArray());
-            }
+    public function batchSize(): int
+    {
+        return 500;
+    }
+
+    public function registerEvents(): array
+    {
+        return [
+            AfterSheet::class => function(AfterSheet $event) {
+                gc_collect_cycles();
+            },
+        ];
+    }
+
+    public function model(array $row): ?Stock
+    {
+        $this->rowNumber++;
+
+        try {
+            return $this->processRow($row);
+        } catch (\Throwable $e) {
+            $this->failedRows++;
+            $this->logError($e->getMessage(), $row);
+            return null;
         }
     }
 
@@ -49,10 +71,8 @@ class StockSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
         return $this->failedRows;
     }
 
-    protected function processRow(Collection $row): void
+    protected function processRow(array $data): ?Stock
     {
-        $data = $row->toArray();
-
         $itemNo = $this->value($data, 'item');
         if (!$itemNo) {
             throw new \RuntimeException('Missing Item#.');
@@ -66,7 +86,9 @@ class StockSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows
             ]
         );
 
-        Stock::create([
+        $this->successRows++;
+
+        return new Stock([
             'upload_history_id' => $this->uploadHistoryId,
             'product_id' => $product->id,
             'branch' => $this->branch,

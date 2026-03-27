@@ -2,31 +2,49 @@
 @section('title', 'Principal Intelligence - ' . $selected_principle)
 
 @section('content')
-<div class="mb-4 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+<div class="mb-4 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
     <div>
-        <a href="{{ route('insights.index') }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">← Kembali</a>
+        <a href="{{ route('insights.index', ['branch' => $selected_branch, 'period_id' => $activePeriod->id]) }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">← Kembali</a>
         <h1 style="font-size: 1.5rem; font-weight: 700;">🏪 Principal Intelligence: {{ $selected_principle }}</h1>
-        <p style="color: var(--text-muted); font-size: 0.9rem;">Analisis 360 derajat performa brand dalam <strong>90 Hari Terakhir</strong>.</p>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Analisis 360 derajat performa brand untuk <strong>3 bulan terakhir</strong> (hingga {{ $activePeriod->name }}).</p>
     </div>
 
     <div style="display: flex; gap: 1rem;">
-        <form method="GET" action="{{ route('insights.principal-report') }}" id="filterForm" style="display: flex; gap: 0.75rem; align-items: center; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
-            <label style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Pilih Prinsipel:</label>
-            <select name="principle" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
-                @foreach($principles as $p)
-                    <option value="{{ $p }}" {{ $selected_principle == $p ? 'selected' : '' }}>{{ $p }}</option>
-                @endforeach
-            </select>
+        <form method="GET" action="{{ route('insights.principal-report') }}" id="filterForm" style="display: flex; gap: 1rem; align-items: center; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border); flex-wrap: wrap;">
+            <!-- Filter Periode -->
+            <div style="display: flex; flex-direction: column;">
+                <label style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">Periode:</label>
+                <select name="period_id" onchange="this.form.submit()" style="padding: 0.2rem; border: none; background: transparent; color: var(--accent-hover); font-weight: 800; outline: none; cursor: pointer;">
+                    @foreach($allPeriods as $p)
+                        <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                            {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
 
-            <div style="width: 1px; height: 20px; background: var(--border);"></div>
+            <div style="width: 1px; height: 30px; background: var(--border);"></div>
 
-            <label style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Wilayah:</label>
-            <select name="branch" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
-                <option value="all" {{ $selected_branch === 'all' ? 'selected' : '' }}>Semua Cabang</option>
-                <option value="OBM_01" {{ $selected_branch === 'OBM_01' ? 'selected' : '' }}>Banjarmasin (OBM_01)</option>
-                <option value="OBM_02" {{ $selected_branch === 'OBM_02' ? 'selected' : '' }}>Barabai (OBM_02)</option>
-                <option value="OBM_03" {{ $selected_branch === 'OBM_03' ? 'selected' : '' }}>Batulicin (OBM_03)</option>
-            </select>
+            <div style="display: flex; flex-direction: column;">
+                <label style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">Prinsipel:</label>
+                <select name="principle" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
+                    @foreach($principles as $p)
+                        <option value="{{ $p }}" {{ $selected_principle == $p ? 'selected' : '' }}>{{ $p }}</option>
+                    @endforeach
+                </select>
+            </div>
+
+            <div style="width: 1px; height: 30px; background: var(--border);"></div>
+
+            <div style="display: flex; flex-direction: column;">
+                <label style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">Wilayah:</label>
+                <select name="branch" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
+                    <option value="all" {{ $selected_branch === 'all' ? 'selected' : '' }}>Semua Cabang</option>
+                    <option value="OBM_01" {{ $selected_branch === 'OBM_01' ? 'selected' : '' }}>Banjarmasin (OBM_01)</option>
+                    <option value="OBM_02" {{ $selected_branch === 'OBM_02' ? 'selected' : '' }}>Barabai (OBM_02)</option>
+                    <option value="OBM_03" {{ $selected_branch === 'OBM_03' ? 'selected' : '' }}>Batulicin (OBM_03)</option>
+                </select>
+            </div>
         </form>
     </div>
 </div>

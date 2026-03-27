@@ -14,7 +14,8 @@ class StoreSalesImportRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file' => ['required', 'file', 'mimes:xlsx,xls,csv', 'max:20480'],
+            'file' => ['required', 'file', 'mimes:xlsx,xls,csv', 'max:51200'],
+            'period_id' => ['nullable', 'exists:periods,id'],
         ];
     }
 }

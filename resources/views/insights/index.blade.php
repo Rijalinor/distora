@@ -3,13 +3,13 @@
 @section('title', 'Keputusan Strategis')
 
 @section('content')
-<div class="d-flex justify-content-between align-items-center mb-4" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem;">
+<div class="d-flex justify-content-between align-items-center mb-4" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem; flex-wrap: wrap; gap: 1rem;">
     <div>
         <h1 style="font-size: 1.8rem; font-weight: 800; background: linear-gradient(135deg, var(--accent), #f472b6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
             💡 Pusat Kendali Keputusan
         </h1>
         <div style="display: flex; gap: 1rem; align-items: center; margin-top: 0.25rem;">
-            <p style="color: var(--text-muted); font-size: 1rem; margin: 0;">Pilar analisis berdasarkan <strong>90 Hari Terakhir</strong> data transaksi.</p>
+            <p style="color: var(--text-muted); font-size: 1rem; margin: 0;">Analisis data transaksi <strong>3 bulan terakhir</strong> (hingga {{ $activePeriod->name }}).</p>
             <a href="{{ route('insights.guide') }}" style="color: var(--accent); font-size: 0.9rem; font-weight: 600; text-decoration: none; display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.6rem; border: 1px solid var(--accent); border-radius: 8px;">
                 📖 Panduan Baca
             </a>
@@ -17,6 +17,17 @@
     </div>
     
     <form method="GET" action="{{ route('insights.index') }}" style="display: flex; gap: 0.75rem; align-items: center; background: var(--bg-card); padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid var(--border);">
+        <label for="period_id" style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Periode:</label>
+        <select name="period_id" id="period_id" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--accent-hover); font-weight: 800; outline: none; cursor: pointer;">
+            @foreach($allPeriods as $p)
+                <option value="{{ $p->id }}" {{ $p->id === $activePeriod->id ? 'selected' : '' }}>
+                    {{ $p->name }} {{ $p->status === 'closed' ? '(Closed)' : '' }}
+                </option>
+            @endforeach
+        </select>
+        
+        <div style="width: 1px; height: 20px; background: var(--border);"></div>
+
         <label for="branch" style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Wilayah:</label>
         <select name="branch" id="branch" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
             <option value="all" {{ $data['selected_branch'] === 'all' ? 'selected' : '' }}>Semua Cabang</option>
@@ -95,7 +106,7 @@
 
 <div class="pillar-grid">
     <!-- Pillar 1: RFM -->
-    <a href="{{ route('insights.rfm', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid var(--accent);">
+    <a href="{{ route('insights.rfm', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid var(--accent);">
         <div class="pillar-icon">💎</div>
         <div class="pillar-title">Segmentasi Toko (RFM)</div>
         <div class="pillar-desc">Klasifikasi otomatis toko ke segmen Sultan, Gold, atau Sleeper untuk prioritas kunjungan.</div>
@@ -103,7 +114,7 @@
     </a>
 
     <!-- Pillar 2: Bundling -->
-    <a href="{{ route('insights.bundling', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid #f59e0b;">
+    <a href="{{ route('insights.bundling', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid #f59e0b;">
         <div class="pillar-icon">📦</div>
         <div class="pillar-title">Rekomendasi Bundling</div>
         <div class="pillar-desc">Algoritma Market Basket untuk mencari pasangan produk yang paling laku dibeli bersama.</div>
@@ -112,7 +123,7 @@
 
 
     <!-- Pillar 3: Monitoring Stok Kritis -->
-    <a href="{{ route('insights.stock-forecast', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid var(--danger);">
+    <a href="{{ route('insights.stock-forecast', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid var(--danger);">
         <div class="pillar-icon">🚨</div>
         <div class="pillar-title">Monitoring Stok Kritis</div>
         <div class="pillar-desc">Pantau barang yang hampir habis dalam 1-3 hari. Pantau level "Kritis" untuk segera amankan stok.</div>
@@ -120,7 +131,7 @@
     </a>
 
      <!-- Pillar 4: Rekomendasi Order Pabrik -->
-     <a href="{{ route('insights.purchase-order', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid var(--accent);">
+     <a href="{{ route('insights.purchase-order', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid var(--accent);">
         <div class="pillar-icon">🛒</div>
         <div class="pillar-title">Rekomendasi Order Pabrik</div>
         <div class="pillar-desc">Hitung otomatis jumlah pesanan ke pabrik berdasarkan target "Buffer" hari yang Anda mau.</div>
@@ -128,7 +139,7 @@
     </a>
 
      <!-- Pillar 5: Dead Stock -->
-     <a href="{{ route('insights.dead-stock', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid #f472b6;">
+     <a href="{{ route('insights.dead-stock', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid #f472b6;">
         <div class="pillar-icon">🧊</div>
         <div class="pillar-title">Stok Mati (Dead Stock)</div>
         <div class="pillar-desc">Daftar produk yang mengendap di gudang tanpa penjualan. Rekomendasi cuci gudang.</div>
@@ -136,7 +147,7 @@
     </a>
 
     <!-- Pillar 6: Growth -->
-    <a href="{{ route('insights.growth', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid #10b981;">
+    <a href="{{ route('insights.growth', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid #10b981;">
         <div class="pillar-icon">📈</div>
         <div class="pillar-title">Pertumbuhan Prinsipel</div>
         <div class="pillar-desc">Monitoring momentum kenaikan atau penurunan omzet mingguan tiap pabrikan.</div>
@@ -144,7 +155,7 @@
     </a>
 
     <!-- Pillar 7: Discounts -->
-    <a href="{{ route('insights.discounts', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid #06b6d4;">
+    <a href="{{ route('insights.discounts', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid #06b6d4;">
         <div class="pillar-icon">💸</div>
         <div class="pillar-title">Evaluasi Efektivitas Diskon</div>
         <div class="pillar-desc">Berapa biaya "Bakar Uang" dibandingkan dengan pendapatan bersih yang didapat?</div>
@@ -153,7 +164,7 @@
 
 
     <!-- Pillar 8: Anomalies -->
-    <a href="{{ route('insights.anomalies', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid var(--warning);">
+    <a href="{{ route('insights.anomalies', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid var(--warning);">
         <div class="pillar-icon">🕵️</div>
         <div class="pillar-title">Audit Sales & Anomali</div>
         <div class="pillar-desc">Deteksi dini kecurangan atau masalah kualitas barang lewat pola retur salesman.</div>
@@ -161,7 +172,7 @@
     </a>
 
     <!-- Pillar 9: Principal Intelligence -->
-    <a href="{{ route('insights.principal-report', ['branch' => $data['selected_branch']]) }}" class="pillar-card" style="border-top: 4px solid #3b82f6;">
+    <a href="{{ route('insights.principal-report', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid #3b82f6;">
         <div class="pillar-icon">🏪</div>
         <div class="pillar-title">Laporan Detail Prinsipel</div>
         <div class="pillar-desc">Deep-dive performa per brand. Cek tren, produk terlaris, dan outlet terloyal khusus untuk prinsipel pilihan.</div>

@@ -148,7 +148,7 @@
 <script>
     function retryUpload(id) {
         if (!confirm('Retry import ini? Data lama akan dihapus dan diproses ulang.')) return;
-        fetch('/api/imports/sales/' + id + '/retry', { method: 'POST',
+        fetch('/imports/sales/' + id + '/retry', { method: 'POST',
             headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
         })
         .then(r => r.json())
@@ -158,7 +158,7 @@
 
     function deleteUpload(id) {
         if (!confirm('Hapus upload ini dan semua data terkait? Aksi ini tidak bisa dibatalkan.')) return;
-        fetch('/api/imports/sales/' + id, { method: 'DELETE',
+        fetch('/imports/sales/' + id, { method: 'DELETE',
             headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
         })
         .then(r => r.json())
