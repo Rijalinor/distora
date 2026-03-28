@@ -333,7 +333,8 @@
                         @php $periodParam = request()->query('period_id') ? ['period_id' => request()->query('period_id')] : []; @endphp
                         <a href="{{ route('dashboard', $periodParam) }}" class="{{ request()->routeIs('dashboard*') ? 'active' : '' }}">Dashboard</a>
                         <a href="{{ route('analytics.index', $periodParam) }}" class="{{ request()->routeIs('analytics.*') ? 'active' : '' }}">📈 Analytics</a>
-                        <a href="{{ route('insights.index', $periodParam) }}" class="{{ request()->routeIs('insights.*') ? 'active' : '' }}">💡 Keputusan</a>
+                        <a href="{{ route('insights.index', $periodParam) }}" class="{{ request()->routeIs('insights.index*') ? 'active' : '' }}">💡 Keputusan</a>
+                        <a href="{{ route('insights.ai-dashboard', $periodParam) }}" class="{{ request()->routeIs('insights.ai-dashboard*') ? 'active' : '' }}">🧠 AI Analisis</a>
                         <a href="{{ route('targets.index', $periodParam) }}" class="{{ request()->routeIs('targets.*') ? 'active' : '' }}">🎯 Target KPI</a>
                         <a href="{{ route('reports.sales-summary', $periodParam) }}" class="{{ request()->routeIs('reports.*') ? 'active' : '' }}">📊 Laporan</a>
                         <a href="{{ route('reset.index') }}" class="{{ request()->routeIs('reset.*') ? 'active' : '' }}" style="color: {{ request()->routeIs('reset.*') ? 'var(--warning)' : '' }}">📒 Tutup Buku</a>

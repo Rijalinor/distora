@@ -97,6 +97,29 @@
 
     <!-- Alert / Risk Analysis -->
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        @if($isAiMode && $forecast)
+        <div style="background: linear-gradient(135deg, #1e1e2d 0%, #252538 100%); padding: 1.5rem; border-radius: 16px; border: 1px solid rgba(99, 102, 241, 0.3); position: relative; overflow: hidden; margin-bottom: 1.5rem;">
+            <div style="position: absolute; top: -10px; right: -10px; font-size: 4rem; opacity: 0.1; transform: rotate(15deg);">✨</div>
+            <h3 style="font-size: 0.9rem; font-weight: 700; margin-bottom: 1rem; color: var(--accent); display: flex; align-items: center; gap: 0.5rem;">
+                🧠 Smart Forecast (Next Month)
+            </h3>
+            <div style="font-size: 1.5rem; font-weight: 800; color: #fff; margin-bottom: 0.5rem;">
+                Rp {{ number_format($forecast['prediction']/1000000, 1) }}jt
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <span style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: {{ $forecast['trend'] == 'growing' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)' }}; color: {{ $forecast['trend'] == 'growing' ? '#10b981' : '#ef4444' }}; font-weight: bold; text-transform: uppercase;">
+                    {{ $forecast['trend'] == 'growing' ? '📈 Growing' : '📉 Declining' }}
+                </span>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">
+                    Confidence: <strong>{{ $forecast['confidence'] }}%</strong>
+                </span>
+            </div>
+            <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 1rem; line-height: 1.4;">
+                *Dihitung menggunakan Linear Regression pada data {{ count($growthSeries) }} bulan terakhir.
+            </p>
+        </div>
+        @endif
+
         <!-- Sleeper Alert -->
         <div style="background: rgba(239, 68, 68, 0.05); padding: 1.5rem; border-radius: 16px; border: 1px solid #ef4444;">
             <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: #ef4444; display: flex; align-items: center; gap: 0.5rem;">⚠️ Top Toko Lama Tidak Order</h3>

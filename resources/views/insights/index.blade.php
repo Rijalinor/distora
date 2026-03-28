@@ -163,20 +163,12 @@
     </a>
 
 
-    <!-- Pillar 8: Anomalies -->
-    <a href="{{ route('insights.anomalies', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid var(--warning);">
-        <div class="pillar-icon">🕵️</div>
-        <div class="pillar-title">Audit Sales & Anomali</div>
-        <div class="pillar-desc">Deteksi dini kecurangan atau masalah kualitas barang lewat pola retur salesman.</div>
-        <div class="pillar-stat" style="color: var(--warning); background: rgba(245, 158, 11, 0.1);">⚠️ {{ $data['summary']['anomalies'] }} Kasus Waspada</div>
-    </a>
-
-    <!-- Pillar 9: Principal Intelligence -->
-    <a href="{{ route('insights.principal-report', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid #3b82f6;">
-        <div class="pillar-icon">🏪</div>
-        <div class="pillar-title">Laporan Detail Prinsipel</div>
-        <div class="pillar-desc">Deep-dive performa per brand. Cek tren, produk terlaris, dan outlet terloyal khusus untuk prinsipel pilihan.</div>
-        <div class="pillar-stat" style="color: #3b82f6; background: rgba(59, 130, 246, 0.1);">📊 Intelligence Per Brand</div>
+    <!-- Pillar 8: AI Advisor -->
+    <a href="{{ route('insights.ai-advisor', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid var(--accent); background: linear-gradient(to bottom right, var(--bg-card), rgba(99, 102, 241, 0.05));">
+        <div class="pillar-icon">🧠</div>
+        <div class="pillar-title">Asisten Keputusan AI</div>
+        <div class="pillar-desc">Asisten pintar yang memberikan saran tindakan nyata berdasarkan anomali, stok, dan peluang pasar.</div>
+        <div class="pillar-stat" style="color: var(--accent); background: rgba(99, 102, 241, 0.1);">💡 {{ $data['summary']['advisor'] }} Saran Tindakan</div>
     </a>
 </div>
 

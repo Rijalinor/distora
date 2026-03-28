@@ -31,12 +31,12 @@ class InsightController extends Controller
         $fullKey = "insight_{$key}_{$period->id}_{$branch}_" . md5(json_encode(request()->all()));
 
         if ($period->status === 'closed') {
-            // Historical data never changes - cache forever
-            return Cache::rememberForever($fullKey, $callback);
+            // Historical data never changes - cache forever in file
+            return Cache::driver('file')->rememberForever($fullKey, $callback);
         }
 
-        // Active period data changes - cache for 10 minutes
-        return Cache::remember($fullKey, 600, $callback);
+        // Active period data changes - cache for 10 minutes in file
+        return Cache::driver('file')->remember($fullKey, 600, $callback);
     }
 
     private function getBranchFilter(Request $request)
@@ -61,6 +61,19 @@ class InsightController extends Controller
     {
         // No longer needed for date-based window, returning null or dummy
         return null;
+    }
+
+    public function aiDashboard(Request $request)
+    {
+        $branch = $this->getBranchFilter($request);
+        $activePeriod = $this->getSelectedPeriod($request);
+
+        $allPeriods = Period::orderBy('id', 'desc')->get();
+        
+        $advisorData = $this->getAiAdvisorData($branch, $activePeriod);
+        $advisorCount = count($advisorData);
+
+        return view('insights.ai-dashboard', compact('activePeriod', 'allPeriods', 'branch', 'advisorCount'));
     }
 
     public function index(Request $request)
@@ -90,8 +103,9 @@ class InsightController extends Controller
             $this->applyBranchFilter($bestBundle, $branch);
             $bestBundle = $bestBundle->select(DB::raw('COUNT(*) as count'))->first()->count > 0 ? 'Tersedia' : 'N/A';
 
-            // 3. Anomalies
-            $anomaliesCount = $this->getAnomaliesData($branch, $activePeriod)->count();
+            // 3. AI Advisor (Pillar 4)
+            $advisorData = $this->getAiAdvisorData($branch, $activePeriod);
+            $advisorCount = count($advisorData);
 
             // 4. Stock alerts
             $stockAlertsCount = count($this->getStockForecastData($branch, 'all', $activePeriod));
@@ -102,7 +116,7 @@ class InsightController extends Controller
             return [
                 'outlets' => $totalOutlets,
                 'bundles' => $bestBundle,
-                'anomalies' => $anomaliesCount,
+                'advisor' => $advisorCount,
                 'stock_alerts' => $stockAlertsCount,
                 'dead_stock' => $deadStockCount,
             ];
@@ -234,55 +248,250 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $activePeriod = $this->getSelectedPeriod($request);
-        $periodIds = $this->get3MonthRange($activePeriod);
+        $range = $request->query('range', '3');
+        $periodIds = ($range == '1') ? [$activePeriod->id] : $this->get3MonthRange($activePeriod);
+        $selectedPrinciple = $request->query('principle_detail');
         
-        $discounts = $this->cachedResult('discounts_v6', $activePeriod, function() use ($branch, $periodIds) {
-            $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
-                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
-                ->whereIn('upload_histories.period_id', $periodIds)
-                ->where('sales.total', '>', 0)
-                ->select(
-                    DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle"),
-                    DB::raw('SUM(sales.gross_price) as gross_sales'),
-                    DB::raw('SUM(sales.disc_item + sales.disc_internal + sales.disc_external + sales.disc_invoice) as total_discount'),
-                    DB::raw('SUM(sales.total) as net_sales')
-                )
-                ->groupBy('principle')
-                ->having('gross_sales', '>', 0)
-                ->orderByDesc('net_sales');
+        $cacheKey = 'discounts_v14_' . $range . '_' . ($selectedPrinciple ? md5($selectedPrinciple) : 'overview');
+
+        $data = $this->cachedResult($cacheKey, $activePeriod, function() use ($branch, $periodIds, $selectedPrinciple, $range) {
+            $principles = []; $summary = []; $trend = []; $mode = 'overview';
             
-            $this->applyBranchFilter($query, $branch);
-            return $query->get()->filter(fn($r) => $r->principle)->map(function($item) {
-                return [
-                    'principle' => $item->principle,
-                    'gross_sales' => (float)$item->gross_sales,
-                    'total_discount' => (float)$item->total_discount,
-                    'net_sales' => (float)$item->net_sales,
-                    'discount_ratio' => ($item->total_discount / ($item->gross_sales ?: 1)) * 100
+            if ($selectedPrinciple) {
+                // PRODUCT LEVEL DETAIL
+                $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                    ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                    ->join('products', 'sales.product_id', '=', 'products.id')
+                    ->whereIn('upload_histories.period_id', $periodIds)
+                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.principle_name')) = ?", [$selectedPrinciple])
+                    ->where('sales.total', '>', 0)
+                    ->select(
+                        'products.name as item_name',
+                        DB::raw('SUM(sales.gross_price) as gross_sales'),
+                        DB::raw('SUM(sales.disc_item) as disc_item'),
+                        DB::raw('SUM(sales.disc_internal + sales.disc_external + sales.disc_invoice) as disc_other'),
+                        DB::raw('SUM(sales.disc_item) as total_discount'),
+                        DB::raw('SUM(sales.total) as net_sales')
+                    )
+                    ->groupBy('products.id', 'products.name')
+                    ->having('gross_sales', '>', 0)
+                    ->orderByDesc('net_sales');
+                
+                $this->applyBranchFilter($query, $branch);
+                $items = $query->get()->map(function($item) {
+                    return (object) [
+                        'name' => $item->item_name,
+                        'gross_sales' => (float)$item->gross_sales,
+                        'disc_item' => (float)$item->disc_item,
+                        'disc_other' => (float)$item->disc_other,
+                        'total_discount' => (float)$item->total_discount,
+                        'net_sales' => (float)$item->net_sales,
+                        'discount_ratio' => ($item->total_discount / ($item->gross_sales ?: 1)) * 100
+                    ];
+                });
+
+                $totalGross = $items->sum('gross_sales');
+                $totalDisc = $items->sum('total_discount');
+                $summary = [
+                    'total_gross' => $items->sum('gross_sales'),
+                    'total_discount' => $items->sum('total_discount'),
+                    'total_net' => $items->sum('net_sales'),
+                    'avg_ratio' => $items->sum('gross_sales') > 0 ? ($items->sum('total_discount') / $items->sum('gross_sales')) * 100 : 0,
+                    'type_breakdown' => [
+                        'Item' => (float)$items->sum('total_discount'),
+                        'Invoice' => (float)$items->sum('disc_other'),
+                    ]
                 ];
-            })->toArray();
+                // User clarified that `disc_item` is the correct source for promotion effectiveness.
+
+                $trendQuery = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                    ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                    ->whereIn('upload_histories.period_id', $periodIds)
+                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.principle_name')) = ?", [$selectedPrinciple])
+                    ->select(
+                        'upload_histories.period_id',
+                        DB::raw('SUM(sales.gross_price) as gross'),
+                        DB::raw('SUM(sales.disc_item) as discount')
+                    )
+                    ->groupBy('upload_histories.period_id');
+                $this->applyBranchFilter($trendQuery, $branch);
+                $trendRaw = $trendQuery->get()->keyBy('period_id');
+
+                $trend = [];
+                foreach (array_reverse($periodIds) as $pId) {
+                    $p = \App\Models\Period::find($pId);
+                    $row = $trendRaw[$pId] ?? (object)['gross' => 0, 'discount' => 0];
+                    $trend[] = [
+                        'month' => $p->name,
+                        'ratio' => $row->gross > 0 ? ($row->discount / $row->gross) * 100 : 0,
+                        'discount' => (float)$row->discount,
+                        'revenue' => (float)($row->gross - $row->discount)
+                    ];
+                }
+
+                $principles = $items->toArray();
+                $mode = 'detail';
+
+            } else {
+                // OVERVIEW
+                $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                    ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                    ->whereIn('upload_histories.period_id', $periodIds)
+                    ->where('sales.total', '>', 0)
+                    ->select(
+                        DB::raw("JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.principle_name')) as principle"),
+                        DB::raw('SUM(sales.gross_price) as gross_sales'),
+                        DB::raw('SUM(sales.disc_item) as disc_item'),
+                        DB::raw('SUM(sales.disc_internal) as disc_internal'),
+                        DB::raw('SUM(sales.disc_external) as disc_external'),
+                        DB::raw('SUM(sales.disc_invoice) as disc_invoice'),
+                        DB::raw('SUM(sales.disc_item) as total_discount'),
+                        DB::raw('SUM(sales.total) as net_sales')
+                    )
+                    ->groupBy('principle')
+                    ->having('gross_sales', '>', 0)
+                    ->orderByDesc('net_sales');
+                
+                $this->applyBranchFilter($query, $branch);
+                $principlesRaw = $query->get()->filter(fn($r) => $r->principle)->map(function($item) {
+                    return (object) [
+                        'principle' => $item->principle,
+                        'gross_sales' => (float)$item->gross_sales,
+                        'disc_item' => (float)$item->disc_item,
+                        'disc_internal' => (float)$item->disc_internal,
+                        'disc_external' => (float)$item->disc_external,
+                        'disc_invoice' => (float)$item->disc_invoice,
+                        'total_discount' => (float)$item->total_discount,
+                        'net_sales' => (float)$item->net_sales,
+                        'discount_ratio' => ($item->total_discount / ($item->gross_sales ?: 1)) * 100
+                    ];
+                });
+
+                $totalGross = $principlesRaw->sum('gross_sales');
+                $totalDisc = $principlesRaw->sum('total_discount');
+                $summary = [
+                    'total_gross' => $totalGross,
+                    'total_discount' => $totalDisc,
+                    'total_net' => $principlesRaw->sum('net_sales'),
+                    'avg_ratio' => $totalGross > 0 ? ($totalDisc / $totalGross) * 100 : 0,
+                    'type_breakdown' => [
+                        'Item' => (float)$principlesRaw->sum('total_discount'),
+                        'Lainnya' => (float)$principlesRaw->sum(fn($p) => $p->disc_internal + $p->disc_external + $p->disc_invoice),
+                    ]
+                ];
+
+                $trendQuery = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                    ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+                    ->whereIn('upload_histories.period_id', $periodIds)
+                    ->select(
+                        'upload_histories.period_id',
+                        DB::raw('SUM(sales.gross_price) as gross'),
+                        DB::raw('SUM(sales.disc_item) as discount')
+                    )
+                    ->groupBy('upload_histories.period_id');
+                $this->applyBranchFilter($trendQuery, $branch);
+                $trendRaw = $trendQuery->get()->keyBy('period_id');
+
+                $trend = [];
+                foreach (array_reverse($periodIds) as $pId) {
+                    $p = \App\Models\Period::find($pId);
+                    $row = $trendRaw[$pId] ?? (object)['gross' => 0, 'discount' => 0];
+                    $trend[] = [
+                        'month' => $p->name,
+                        'ratio' => $row->gross > 0 ? ($row->discount / $row->gross) * 100 : 0,
+                        'discount' => (float)$row->discount,
+                        'revenue' => (float)($row->gross - $row->discount)
+                    ];
+                }
+
+                $principles = $principlesRaw->toArray();
+                $mode = 'overview';
+            }
+
+            // --- SUPERVISOR INSIGHTS ENGINE ---
+            $actions = [];
+            $principlesColl = collect($principles);
+            $avgRatio = $summary['avg_ratio'];
+
+            if ($mode == 'overview') {
+                if ($avgRatio > 10) {
+                    $actions[] = "⚠️ **Peringatan Rasio Tinggi**: Rasio diskon total mencapai " . number_format($avgRatio, 1) . "%. Supervisor harus meninjau ulang semua promo invoice yang aktif.";
+                }
+                
+                $highestBurner = $principlesColl->sortByDesc('discount_ratio')->first();
+                if ($highestBurner && $highestBurner->discount_ratio > 15) {
+                    $actions[] = "🔥 **Audit High Burner**: Prinsipel `" . $highestBurner->principle . "` memiliki rasio " . number_format($highestBurner->discount_ratio, 1) . "%. Segera evaluasi apakah pertumbuhan omzet sebanding dengan subsidi promo.";
+                }
+
+                $invoiceDisc = $summary['type_breakdown']['Invoice'] ?? 0;
+                $totalDiscValue = $summary['total_discount'];
+                if ($totalDiscValue > 0 && ($invoiceDisc / $totalDiscValue) > 0.4) {
+                    $actions[] = "🕵️ **Kebocoran Invoice**: Diskon faktur (Invoice) mendominasi budget promo. Supervisor disarankan mengaudit laporan 'Diskon Khusus' untuk mendeteksi penyalahgunaan delegasi harga.";
+                }
+            } else {
+                $topItem = $principlesColl->sortByDesc('discount_ratio')->first();
+                if ($topItem && $topItem->discount_ratio > 15) {
+                    $actions[] = "📉 **Item Over-Discount**: Produk `" . $topItem->name . "` dibakar dengan rasio " . number_format($topItem->discount_ratio, 1) . "%. Turunkan intensitas promo jika stok mulai menipis.";
+                }
+                
+                $starItem = $principlesColl->where('discount_ratio', '<', 5)->sortByDesc('net_sales')->first();
+                if ($starItem) {
+                    $actions[] = "⭐ **Peluang Expansi**: Produk `" . $starItem->name . "` sangat efisien (Rasio " . number_format($starItem->discount_ratio, 1) . "%). Tambah display atau alihkan sedikit budget promo ke sini untuk genjot omzet.";
+                }
+            }
+
+            if (count($actions) < 2) {
+                $actions[] = "✅ **Kesehatan Promo**: Performa diskon saat ini terpantau stabil. Lanjutkan pemantauan harian.";
+            }
+
+            return [
+                'principles' => $principles,
+                'summary' => $summary,
+                'trend' => $trend,
+                'mode' => $mode,
+                'supervisor_actions' => $actions,
+                'range' => $range
+            ];
         });
 
-        $discounts = collect($discounts)->map(fn($i) => (object)$i);
-
         return view('insights.discounts', [
-            'data' => $discounts,
+            'data' => collect($data['principles']),
+            'summary' => (object)$data['summary'],
+            'trend' => $data['trend'],
+            'mode' => $data['mode'],
+            'supervisor_actions' => $data['supervisor_actions'],
+            'selected_principle' => $selectedPrinciple,
+            'selected_branch' => $branch,
+            'selected_range' => $data['range'],
+            'activePeriod' => $activePeriod,
+            'allPeriods' => \App\Models\Period::ordered()->get()
+        ]);
+    }
+
+    // --- PILLAR 4: AI DECISION ADVISOR ---
+    public function aiAdvisor(Request $request)
+    {
+        $branch = $this->getBranchFilter($request);
+        $activePeriod = $this->getSelectedPeriod($request);
+        $advisorCards = $this->cachedResult('ai_advisor_v2', $activePeriod, function() use ($branch, $activePeriod) {
+            return $this->getAiAdvisorData($branch, $activePeriod);
+        });
+
+        return view('insights.ai-advisor', [
+            'cards' => $advisorCards,
             'selected_branch' => $branch,
             'activePeriod' => $activePeriod,
             'allPeriods' => \App\Models\Period::ordered()->get()
         ]);
     }
 
-    // --- PILLAR 4: ANOMALIES ---
-    public function anomalies(Request $request)
+    public function salesmanAudit(Request $request)
     {
         $branch = $this->getBranchFilter($request);
         $activePeriod = $this->getSelectedPeriod($request);
-        $anomalies = $this->cachedResult('anomalies_v6', $activePeriod, function() use ($branch, $activePeriod) {
-            return $this->getAnomaliesData($branch, $activePeriod);
-        });
+        $anomalies = $this->getAnomaliesData($branch, $activePeriod);
 
-        return view('insights.anomalies', [
+        return view('insights.salesman-audit', [
             'data' => $anomalies,
             'selected_branch' => $branch,
             'activePeriod' => $activePeriod,
@@ -290,6 +499,97 @@ class InsightController extends Controller
         ]);
     }
 
+    public function anomalies(Request $request)
+    {
+        return $this->aiAdvisor($request);
+    }
+
+    private function getAiAdvisorData($branch, $period = null)
+    {
+        $period = $period ?? $this->getSelectedPeriod(request());
+        $precedingIds = $period->getPrecedingIds(3);
+        $cards = [];
+
+        // 1. ANOMALY: High Returns
+        $returns = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->whereIn('upload_histories.period_id', $precedingIds)
+            ->whereNotNull('transactions.meta')
+            ->select(
+                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.sales_name')) as salesman"),
+                DB::raw('SUM(CASE WHEN sales.total > 0 THEN sales.total ELSE 0 END) as gross'),
+                DB::raw('ABS(SUM(CASE WHEN sales.total < 0 THEN sales.total ELSE 0 END)) as returns')
+            )
+            ->groupBy('salesman')
+            ->having('gross', '>', 0)
+            ->get();
+
+        foreach ($returns as $r) {
+            $rate = ($r->returns / $r->gross) * 100;
+            if ($rate > 5) {
+                $cards[] = [
+                    'type' => 'danger',
+                    'title' => 'Audit Salesman: Return Tinggi',
+                    'desc' => "Salesman <strong>{$r->salesman}</strong> memiliki rasio retur " . round($rate, 1) . "%, jauh di atas batas aman 2%.",
+                    'action' => 'Cek Nota Retur',
+                    'link' => route('insights.salesman-audit', ['branch' => $branch, 'period_id' => $period->id, 'salesman' => $r->salesman]),
+                    'icon' => '🕵️'
+                ];
+            }
+        }
+
+        // 2. RISK: Stockout Opportunity (using Smart AI Prediction)
+        $pData = $this->getPurchaseOrderData($branch, 'all', $period);
+        $criticalStock = collect($pData)->filter(function($i) {
+            $daily = $i->ai_prediction / 30;
+            $days = ($daily > 0) ? ($i->current_stock / $daily) : 999;
+            $i->days_calculated = $days;
+            return $days < 7 && $i->ai_prediction > 0;
+        })->sortBy('days_calculated')->take(5);
+
+        foreach ($criticalStock as $s) {
+            $volNote = $s->volatility > 0.5 ? " <span style='color:var(--warning)'>[Akurasi Rendah: Jualan Fluktuatif]</span>" : "";
+            $cards[] = [
+                'type' => 'warning',
+                'title' => 'Risiko Stok Habis (AI S1)',
+                'desc' => "Produk <strong>{$s->product_name}</strong> ({$s->category}) diprediksi habis dalam <strong>" . round($s->days_calculated, 1) . " hari</strong> menurut tren AI.{$volNote}",
+                'action' => 'Buka Order Pabrik',
+                'link' => route('insights.purchase-order', ['branch' => $branch, 'period_id' => $period->id]),
+                'icon' => '🚨'
+            ];
+        }
+
+        // 3. OPPORTUNITY: Category Momentum & Growth
+        // Find categories that are growing (> 1.2 momentum)
+        $growthOpportunity = collect($pData)->filter(fn($i) => $i->ai_trend === 'growing' && $i->ai_confidence > 70)->sortByDesc('ai_prediction')->first();
+
+        if ($growthOpportunity) {
+            $cards[] = [
+                'type' => 'info',
+                'title' => 'Peluang Akselerasi: ' . $growthOpportunity->category,
+                'desc' => "Produk <strong>{$growthOpportunity->product_name}</strong> menunjukkan tren pertumbuhan kuat (" . round($growthOpportunity->ai_confidence) . "% confidence). Pertimbangkan tambah stok ekstra.",
+                'action' => 'Lihat Tren Brand',
+                'link' => route('insights.principal-report', ['branch' => $branch, 'period_id' => $period->id]),
+                'icon' => '📈'
+            ];
+        }
+
+        // 4. AUDIT: Promo Fatigue (Optionally add)
+        if (count($cards) < 4) {
+            $cards[] = [
+                'type' => 'info',
+                'title' => 'Optimasi Promo',
+                'desc' => "Analisis S1 menunjukkan efektivitas diskon di cabang ini cukup stabil. AI menyarankan evaluasi SKU yang stagnan meskipun ada promo.",
+                'action' => 'Evaluasi Diskon',
+                'link' => route('insights.discounts', ['branch' => $branch, 'period_id' => $period->id]),
+                'icon' => '💸'
+            ];
+        }
+
+        return $cards;
+    }
+
+    // Keep original anomalies check for helper
     private function getAnomaliesData($branch, $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
@@ -422,13 +722,14 @@ class InsightController extends Controller
         $branch = $this->getBranchFilter($request);
         $principle = $request->query('principle', 'all');
         $activePeriod = $this->getSelectedPeriod($request);
+        $isAiMode = $request->query('mode') === 'ai';
 
         $principles = Transaction::whereNotNull('meta')
             ->select(DB::raw("JSON_UNQUOTE(JSON_EXTRACT(meta, '$.principle_name')) as name"))
             ->distinct()
             ->pluck('name')->filter()->sort()->values();
 
-        $orderSuggestions = $this->cachedResult('purchase_order_v5', $activePeriod, function() use ($branch, $principle, $activePeriod) {
+        $orderSuggestions = $this->cachedResult('purchase_order_v8', $activePeriod, function() use ($branch, $principle, $activePeriod) {
             return $this->getPurchaseOrderData($branch, $principle, $activePeriod);
         });
 
@@ -438,54 +739,137 @@ class InsightController extends Controller
             'selected_principle' => $principle,
             'principles' => $principles,
             'activePeriod' => $activePeriod,
-            'allPeriods' => \App\Models\Period::ordered()->get()
+            'allPeriods' => \App\Models\Period::ordered()->get(),
+            'isAiMode' => $isAiMode
         ]);
     }
 
     private function getPurchaseOrderData($branch, $principle = 'all', $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        $precedingIds = $period->getPrecedingIds(3);
-        if (count($precedingIds) < 3) return []; // Need at least 3 months history
+        $precedingIds = $period->getPrecedingIds(6);
+        if (count($precedingIds) < 2) return [];
 
-        // Correct sequence: Dec(m1), Jan(m2), Feb(m3) for March(period)
-        $p1 = Period::find($precedingIds[2]); // Dec
-        $p2 = Period::find($precedingIds[1]); // Jan
-        $p3 = Period::find($precedingIds[0]); // Feb
+        // For UI display, we still want the last 3
+        $displayIds = $period->getPrecedingIds(3);
+        $p1 = isset($displayIds[2]) ? Period::find($displayIds[2]) : null;
+        $p2 = isset($displayIds[1]) ? Period::find($displayIds[1]) : null;
+        $p3 = isset($displayIds[0]) ? Period::find($displayIds[0]) : null;
 
         $query = Sale::join('transactions', 'sales.transaction_id', '=', 'transactions.id')
             ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
-            ->join('products', 'sales.product_id', '=', 'products.id')
+            ->leftJoin('products', 'sales.product_id', '=', 'products.id')
             ->whereIn('upload_histories.period_id', $precedingIds)
             ->select(
-                'products.id', 'products.name',
+                'products.id', 'products.name', 'products.category', 'upload_histories.period_id',
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle_name"),
-                DB::raw('SUM(sales.qty) as total_qty_sold'),
-                DB::raw("SUM(CASE WHEN upload_histories.period_id = {$p1->id} THEN sales.qty ELSE 0 END) as qty_m1"),
-                DB::raw("SUM(CASE WHEN upload_histories.period_id = {$p2->id} THEN sales.qty ELSE 0 END) as qty_m2"),
-                DB::raw("SUM(CASE WHEN upload_histories.period_id = {$p3->id} THEN sales.qty ELSE 0 END) as qty_m3")
+                DB::raw('SUM(sales.qty) as qty'),
+                DB::raw('SUM(sales.total) as total_net'),
+                DB::raw('SUM(sales.disc_item) as total_disc')
             )
-            ->groupBy('products.id', 'products.name', 'principle_name');
+            ->groupBy('products.id', 'products.name', 'products.category', 'principle_name', 'upload_histories.period_id');
         
         $this->applyBranchFilter($query, $branch);
         if ($principle !== 'all') {
             $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) = ?", [$principle]);
         }
 
-        $salesVelocity = $query->get()->keyBy('id');
+        $salesRaw = $query->get();
+        $salesVelocity = [];
+        $mlInput = [];
+        
+        // Fetch Historical Stocks for Stockout Recovery AI
+        $histStockMap = []; 
+        $stockMapNames = ['OBM_01' => 'bjm', 'OBM_02' => 'brb', 'OBM_03' => 'btl'];
+        $bCode = ($branch !== 'all') ? ($stockMapNames[$branch] ?? $branch) : null;
+        
+        $histUploadMap = Stock::whereHas('uploadHistory', fn($q) => $q->whereIn('period_id', $precedingIds))
+            ->when($bCode, fn($q) => $q->where('branch', $bCode))
+            ->join('upload_histories', 'stocks.upload_history_id', '=', 'upload_histories.id')
+            ->select('upload_histories.period_id', 'stocks.upload_history_id')
+            ->distinct()
+            ->pluck('upload_history_id', 'period_id');
+        
+        if ($histUploadMap->count() > 0) {
+            $histStocksRaw = Stock::whereIn('upload_history_id', $histUploadMap->values())
+                ->select('product_id', 'upload_history_id', 'on_hand_base')
+                ->get();
+            
+            $uIdToPId = $histUploadMap->flip();
+            foreach ($histStocksRaw as $hs) {
+                $pId = $uIdToPId[$hs->upload_history_id];
+                $histStockMap[$pId][$hs->product_id] = $hs->on_hand_base;
+            }
+        }
+        
+        // Reverse precedingIds to get chronological order for ML
+        $chronoPeriods = array_reverse($precedingIds);
+        $periodMap = array_flip($chronoPeriods); // map period_id -> index 0..5
+
+        // 🎓 S1 UPGRADE: Categorical Momentum Analysis
+        $catTrends = []; 
+        foreach ($salesRaw as $row) {
+            $catTrends[$row->category][$row->period_id] = ($catTrends[$row->category][$row->period_id] ?? 0) + $row->qty;
+        }
+
+        foreach ($salesRaw as $row) {
+            if (!isset($salesVelocity[$row->id])) {
+                $salesVelocity[$row->id] = (object) [
+                    'id' => $row->id,
+                    'name' => $row->name,
+                    'category' => $row->category,
+                    'principle_name' => $row->principle_name,
+                    'total_qty_sold' => 0,
+                    'qty_m1' => 0, 'qty_m2' => 0, 'qty_m3' => 0
+                ];
+            }
+            $v = &$salesVelocity[$row->id];
+            $v->total_qty_sold += $row->qty;
+            
+            if ($p1 && $row->period_id == $p1->id) $v->qty_m1 += $row->qty;
+            if ($p2 && $row->period_id == $p2->id) $v->qty_m2 += $row->qty;
+            if ($p3 && $row->period_id == $p3->id) $v->qty_m3 += $row->qty;
+
+            // Prepare ML data: chronological index
+            $idx = $periodMap[$row->period_id];
+            
+            // Calculate Category Growth for this period relative to the category's average
+            $catAvg = array_sum($catTrends[$row->category]) / count($precedingIds);
+            $catMomentum = ($catAvg > 0) ? ($catTrends[$row->category][$row->period_id] / $catAvg) : 1;
+
+            if (!isset($mlInput[$row->id][$idx])) {
+                $mlInput[$row->id][$idx] = [
+                    'qty' => 0, 
+                    'promo' => 0, 
+                    'stockout' => 0,
+                    'cat_momentum' => $catMomentum
+                ];
+            }
+            $mlInput[$row->id][$idx]['qty'] += (float)$row->qty;
+            $gross = (float)$row->total_net + (float)$row->total_disc;
+            $mlInput[$row->id][$idx]['promo'] += ($gross > 0) ? ((float)$row->total_disc / $gross) * 100 : 0;
+            
+            // Check if it was a stockout month
+            $hStock = $histStockMap[$row->period_id][$row->id] ?? 1;
+            if ($hStock <= 0) $mlInput[$row->id][$idx]['stockout'] = 1;
+        }
 
         $stockMap = ['OBM_01' => 'bjm', 'OBM_02' => 'brb', 'OBM_03' => 'btl'];
         $branchCode = ($branch !== 'all') ? ($stockMap[$branch] ?? $branch) : null;
 
         $stockQuery = Stock::select('product_id', DB::raw('SUM(on_hand_base) as current_stock'))->groupBy('product_id');
         
+        // Find latest stock for the selected period
         $latestUploadId = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $period->id))->max('upload_history_id');
+        
+        // Fallback: If no stock for selected period, find the absolute latest stock in the system
+        if (!$latestUploadId) {
+            $latestUploadId = Stock::max('upload_history_id');
+        }
 
         if ($latestUploadId) {
             $stockQuery->where('upload_history_id', $latestUploadId);
-            if ($branchCode) {
-                $stockQuery->where('branch', $branchCode);
-            }
+            if ($branchCode) $stockQuery->where('branch', $branchCode);
         } else {
             return [];
         }
@@ -494,23 +878,69 @@ class InsightController extends Controller
 
 
         $results = [];
+        // Important: Ensure all ML Input items have values for all periods or fill with 0
+        foreach ($mlInput as $pId => $data) {
+            // 🎓 S1 UPGRADE: Volatility Calculation (Coefficient of Variation)
+            $qtys = array_column($data, 'qty');
+            $avg = count($qtys) > 0 ? array_sum($qtys) / count($qtys) : 0;
+            $variance = 0;
+            foreach ($qtys as $q) $variance += pow($q - $avg, 2);
+            $stdDev = count($qtys) > 1 ? sqrt($variance / (count($qtys) - 1)) : 0;
+            $volatility = ($avg > 0) ? ($stdDev / $avg) : 0;
+
+            for ($i=0; $i < count($chronoPeriods); $i++) {
+                if (!isset($mlInput[$pId][$i])) {
+                    $periodId = $chronoPeriods[$i];
+                    $hStock = $histStockMap[$periodId][$pId] ?? 1;
+                    $mlInput[$pId][$i] = [
+                        'qty' => 0, 
+                        'promo' => 0, 
+                        'stockout' => ($hStock <= 0 ? 1 : 0),
+                        'cat_momentum' => 1 // Default neutral
+                    ];
+                }
+                // Inject Volatility into every time step to help the model learn consistency
+                $mlInput[$pId][$i]['volatility'] = (float)$volatility;
+            }
+        }
+
+        $periodDates = [];
+        foreach ($chronoPeriods as $idx => $pId) {
+            $pModel = Period::find($pId);
+            $periodDates[$idx] = $pModel ? "{$pModel->year}-" . str_pad($pModel->month, 2, '0', STR_PAD_LEFT) : null;
+        }
+
+        $aiPredictions = $this->getBatchMLForecast($mlInput, $periodDates);
+
+        $aiPredictions = $this->getBatchMLForecast($mlInput, $periodDates);
+
         foreach ($salesVelocity as $productId => $salesData) {
             $stock = isset($currentStocks[$productId]) ? $currentStocks[$productId]->current_stock : 0;
-            $avgDaily = $salesData->total_qty_sold / 90;
-            $avgMonthly = $salesData->total_qty_sold / 3;
+            $avgDaily = $salesData->total_qty_sold / (count($precedingIds) * 30);
+            $avgMonthly = $salesData->total_qty_sold / count($precedingIds);
             
+            $aiData = $aiPredictions[$productId] ?? null;
+            $volatility = isset($mlInput[$productId][0]['volatility']) ? $mlInput[$productId][0]['volatility'] : 0;
+
             $results[] = (object) [
+                'id' => $productId,
                 'product_name' => $salesData->name,
+                'category' => $salesData->category,
                 'principle_name' => $salesData->principle_name,
                 'current_stock' => $stock,
                 'avg_daily' => (float) $avgDaily,
                 'avg_monthly' => (float) $avgMonthly,
-                'm1_name' => \Carbon\Carbon::create($p1->year, $p1->month, 1)->translatedFormat('M y'),
-                'm2_name' => \Carbon\Carbon::create($p2->year, $p2->month, 1)->translatedFormat('M y'),
-                'm3_name' => \Carbon\Carbon::create($p3->year, $p3->month, 1)->translatedFormat('M y'),
+                'volatility' => (float) $volatility,
+                'm1_name' => $p1 ? \Carbon\Carbon::create($p1->year, $p1->month, 1)->translatedFormat('M y') : '-',
+                'm2_name' => $p2 ? \Carbon\Carbon::create($p2->year, $p2->month, 1)->translatedFormat('M y') : '-',
+                'm3_name' => $p3 ? \Carbon\Carbon::create($p3->year, $p3->month, 1)->translatedFormat('M y') : '-',
                 'qty_m1' => (float) ($salesData->qty_m1 ?? 0),
                 'qty_m2' => (float) ($salesData->qty_m2 ?? 0),
-                'qty_m3' => (float) ($salesData->qty_m3 ?? 0)
+                'qty_m3' => (float) ($salesData->qty_m3 ?? 0),
+                'ai_prediction' => $aiData ? (float) $aiData['prediction'] : $avgMonthly,
+                'ai_trend' => $aiData ? $aiData['trend'] : 'stable',
+                'ai_confidence' => $aiData ? (float) $aiData['confidence'] : 0,
+                'is_ml' => $aiData ? (bool) $aiData['is_ml'] : false
             ];
         }
         return $results;
@@ -522,20 +952,26 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $activePeriod = $this->getSelectedPeriod($request);
-        [$startDate, $endDate] = $this->get3MonthRange($activePeriod);
-        $deadStock = $this->cachedResult('dead_stock_3m', $activePeriod, function() use ($branch, $activePeriod, $startDate, $endDate) {
-            return $this->getDeadStockData($branch, $activePeriod);
+        $principle = $request->query('principle', 'all');
+
+        $deadStock = $this->cachedResult('dead_stock_v2', $activePeriod, function() use ($branch, $activePeriod, $principle) {
+            return $this->getDeadStockData($branch, $activePeriod, $principle);
         });
+
+        $allPrinciples = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $activePeriod->id))
+            ->distinct()->pluck('principle_name')->filter()->sort()->values();
 
         return view('insights.dead-stock', [
             'data' => $deadStock,
             'selected_branch' => $branch,
+            'selected_principle' => $principle,
             'activePeriod' => $activePeriod,
-            'allPeriods' => \App\Models\Period::ordered()->get()
+            'allPeriods' => \App\Models\Period::ordered()->get(),
+            'allPrinciples' => $allPrinciples
         ]);
     }
 
-    private function getDeadStockData($branch, $period = null)
+    private function getDeadStockData($branch, $period = null, $principle = 'all')
     {
         $period = $period ?? $this->getSelectedPeriod(request());
         $precedingIds = $period->getPrecedingIds(3);
@@ -551,10 +987,12 @@ class InsightController extends Controller
             ->where('stocks.on_hand_base', '>', 0)
             ->select(
                 'products.name',
+                'stocks.principle_name',
                 DB::raw('SUM(stocks.on_hand_base) as stock'),
                 DB::raw('SUM(stocks.stock_value_on_hand) as value')
             )
-            ->groupBy('products.id', 'products.name')
+            ->when($principle !== 'all', fn($q) => $q->where('stocks.principle_name', $principle))
+            ->groupBy('products.id', 'products.name', 'stocks.principle_name')
             ->orderByDesc('value');
         
         $stockMap = ['OBM_01' => 'bjm', 'OBM_02' => 'brb', 'OBM_03' => 'btl'];
@@ -634,12 +1072,17 @@ class InsightController extends Controller
     {
         $branch = $this->getBranchFilter($request);
         $activePeriod = $this->getSelectedPeriod($request);
-        $periodIds = $this->get3MonthRange($activePeriod); // Assuming this method returns an array of period IDs
+        $periodIds = $this->get3MonthRange($activePeriod); 
+        $isAiMode = $request->query('mode') === 'ai';
         
         // Fetch all possible principles for the dropdown within the 3-month window
-        $principles = Transaction::join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
-            ->whereIn('upload_histories.period_id', $periodIds)
-            ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) as name'))
+        $dropdownQuery = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->whereIn('upload_histories.period_id', $periodIds);
+        
+        $this->applyBranchFilter($dropdownQuery, $branch);
+        
+        $principles = $dropdownQuery->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_name")) as name'))
             ->distinct()->pluck('name')->filter(fn($n) => !empty($n) && $n !== 'Principle Name')->sort()->values();
 
         $selectedPrinciple = $request->query('principle', $principles[0] ?? null);
@@ -647,21 +1090,23 @@ class InsightController extends Controller
         if (!$selectedPrinciple) {
             return view('insights.principal-report', [
                 'data' => null,
-                'summary' => null, // Added for consistency
+                'summary' => null,
                 'principles' => $principles,
                 'selected_branch' => $branch,
                 'selected_principle' => null,
                 'activePeriod' => $activePeriod,
-                'allPeriods' => \App\Models\Period::ordered()->get()
+                'allPeriods' => \App\Models\Period::ordered()->get(),
+                'isAiMode' => $isAiMode
             ]);
         }
 
-        $reportData = $this->cachedResult('principal_report_v8', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles) {
+        $reportData = $this->cachedResult('principal_report_v9', $activePeriod, function() use ($selectedPrinciple, $branch, $periodIds, $activePeriod, $principles) {
             // Find the Principle ID for the selected name
-            $principleId = Transaction::join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            $principleId = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+                ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
                 ->whereIn('upload_histories.period_id', $periodIds)
-                ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_name")) = ?', [$selectedPrinciple])
-                ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(meta, "$.principle_id")) as pid'))
+                ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_name")) = ?', [$selectedPrinciple])
+                ->select(DB::raw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_id")) as pid'))
                 ->value('pid');
 
             // 1. Summary Metrics
@@ -670,9 +1115,9 @@ class InsightController extends Controller
                 ->whereIn('upload_histories.period_id', $periodIds);
             
             if ($principleId) {
-                $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
+                $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_id")) = ?', [$principleId]);
             } else {
-                $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+                $queryBase->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_name")) = ?', [$selectedPrinciple]);
             }
             
             $this->applyBranchFilter($queryBase, $branch);
@@ -703,9 +1148,9 @@ class InsightController extends Controller
                 ->whereIn('upload_histories.period_id', $allGrowthPeriodIds);
             
             if ($principleId) {
-                $monthlyData->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
+                $monthlyData->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_id")) = ?', [$principleId]);
             } else {
-                $monthlyData->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+                $monthlyData->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_name")) = ?', [$selectedPrinciple]);
             }
             $this->applyBranchFilter($monthlyData, $branch);
             
@@ -721,7 +1166,7 @@ class InsightController extends Controller
                 $pModel = \App\Models\Period::find($pId);
                 if ($prevVal !== null) {
                     $growthSeries[] = [
-                        'month' => $pModel->name,
+                        'month' => "{$pModel->year}-" . str_pad($pModel->month, 2, '0', STR_PAD_LEFT),
                         'value' => $currVal,
                         'growth' => $prevVal > 0 ? (($currVal - $prevVal) / $prevVal) * 100 : ($currVal > 0 ? 100 : 0)
                     ];
@@ -764,9 +1209,9 @@ class InsightController extends Controller
                     ->whereIn('upload_histories.period_id', $prev3PeriodIds);
 
                 if ($principleId) {
-                    $prevValQuery->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_id")) = ?', [$principleId]);
+                    $prevValQuery->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_id")) = ?', [$principleId]);
                 } else {
-                    $prevValQuery->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple]);
+                    $prevValQuery->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_name")) = ?', [$selectedPrinciple]);
                 }
 
                 $this->applyBranchFilter($prevValQuery, $branch);
@@ -777,11 +1222,14 @@ class InsightController extends Controller
 
             // 8. Sleeper Outlets
             $rfmNow = \Carbon\Carbon::now(); // Use current date for recency calculation
-            $lastOrders = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            $lastOrdersQuery = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
                 ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
                 ->whereIn('upload_histories.period_id', $periodIds) // Filter by period IDs
-                ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, "$.principle_name")) = ?', [$selectedPrinciple])
-                ->select('transactions.outlet_id', DB::raw('MAX(transactions.transaction_date) as last_date'), DB::raw('SUM(sales.total) as total_contribution'))
+                ->whereRaw('JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, "$.principle_name")) = ?', [$selectedPrinciple]);
+            
+            $this->applyBranchFilter($lastOrdersQuery, $branch);
+            
+            $lastOrders = $lastOrdersQuery->select('transactions.outlet_id', DB::raw('MAX(transactions.transaction_date) as last_date'), DB::raw('SUM(sales.total) as total_contribution'))
                 ->groupBy('transactions.outlet_id')
                 ->orderByDesc('total_contribution')->limit(50)->get();
             
@@ -804,7 +1252,10 @@ class InsightController extends Controller
                 ->groupBy('products.id', 'products.name')
                 ->orderByDesc('value')->limit(5)->get();
 
-            return compact('summary', 'trend', 'growthSeries', 'topProducts', 'topOutlets', 'topSalesmen', 'cityAnalysis', 'growthVal', 'currVal', 'sleepers', 'returns');
+            // 10. ML Forecast
+            $forecast = $this->getMLForecast($growthSeries);
+
+            return compact('summary', 'trend', 'growthSeries', 'topProducts', 'topOutlets', 'topSalesmen', 'cityAnalysis', 'growthVal', 'currVal', 'sleepers', 'returns', 'forecast');
         });
 
         return view('insights.principal-report', [
@@ -821,9 +1272,146 @@ class InsightController extends Controller
             'growth3m' => round($reportData['growthVal'], 1),
             'sleepers' => $reportData['sleepers'],
             'returns' => $reportData['returns'],
+            'forecast' => $reportData['forecast'],
             'activePeriod' => $activePeriod,
-            'allPeriods' => \App\Models\Period::ordered()->get()
+            'allPeriods' => \App\Models\Period::ordered()->get(),
+            'isAiMode' => $isAiMode
         ]);
+    }
+
+    // --- PILLAR 9: SALESMAN INTELLIGENCE ---
+
+    public function salesmanIntelligence(Request $request)
+    {
+        $branch = $request->get('branch', 'all');
+        $periodId = $request->get('period_id');
+        $activePeriod = $periodId ? Period::find($periodId) : $this->getActivePeriod();
+        
+        $allPeriods = Period::orderBy('id', 'desc')->get();
+
+        $data = $this->cachedResult('salesman_intel_v1', $activePeriod, function() use ($branch, $activePeriod) {
+            return $this->getSalesmanIntelligenceData($branch, $activePeriod);
+        }, $branch);
+
+        return view('insights.salesman-intelligence', compact('data', 'activePeriod', 'branch', 'allPeriods'));
+    }
+
+    private function getSalesmanIntelligenceData($branch, $period)
+    {
+        $precedingIds = $period->getPrecedingIds(6);
+        if (count($precedingIds) < 1) return [];
+
+        $chronoPeriods = array_reverse($precedingIds);
+        $periodMap = array_flip($chronoPeriods);
+
+        $query = Sale::join('transactions', 'sales.transaction_id', '=', 'transactions.id')
+            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
+            ->whereIn('upload_histories.period_id', $precedingIds)
+            ->where('sales.total', '>', 0) // Sales only
+            ->select(
+                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.sales_id')) as sales_id"),
+                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.sales_name')) as sales_name"),
+                'upload_histories.period_id',
+                DB::raw('SUM(sales.total) as total_revenue'),
+                DB::raw('COUNT(DISTINCT transactions.id) as total_tx'),
+                DB::raw('COUNT(DISTINCT transactions.outlet_id) as total_outlets')
+            )
+            ->groupBy('sales_id', 'sales_name', 'upload_histories.period_id');
+
+        $this->applyBranchFilter($query, $branch);
+        $raw = $query->get();
+
+        // 🎓 S1 UPGRADE: Area Momentum Analysis (Branch-wide daily trend)
+        $branchTrends = [];
+        foreach ($raw as $row) {
+            $branchTrends[$row->period_id] = ($branchTrends[$row->period_id] ?? 0) + $row->total_revenue;
+        }
+
+        $salesmen = [];
+        $mlInput = [];
+        
+        foreach ($raw as $row) {
+            if (!$row->sales_id) continue;
+            
+            if (!isset($salesmen[$row->sales_id])) {
+                $salesmen[$row->sales_id] = (object) [
+                    'id' => $row->sales_id,
+                    'name' => $row->sales_name,
+                    'total_revenue' => 0,
+                    'total_tx' => 0,
+                    'total_outlets' => 0,
+                    'history' => array_fill(0, count($chronoPeriods), 0)
+                ];
+            }
+            
+            $s = &$salesmen[$row->sales_id];
+            $s->total_revenue += $row->total_revenue;
+            $s->total_tx += $row->total_tx;
+            $s->total_outlets = max($s->total_outlets, $row->total_outlets);
+
+            $idx = $periodMap[$row->period_id];
+            $s->history[$idx] = (float) $row->total_revenue;
+
+            // Activity Factor (Transaction intensity)
+            $activity = (float) $row->total_tx;
+
+            // Area Momentum: How this branch performed this month vs it's average
+            $branchAvg = array_sum($branchTrends) / count($precedingIds);
+            $areaMomentum = ($branchAvg > 0) ? ($branchTrends[$row->period_id] / $branchAvg) : 1;
+
+            if (!isset($mlInput[$row->sales_id][$idx])) {
+                $mlInput[$row->sales_id][$idx] = [
+                    'qty' => (float) $row->total_revenue,
+                    'promo' => (float) $row->total_tx, // Use transaction count as effort/activity variable
+                    'stockout' => 0,
+                    'cat_momentum' => $areaMomentum
+                ];
+            }
+        }
+
+        // Fill missing ML indices and calculate Volatility
+        foreach ($mlInput as $sId => $data) {
+            $revs = array_column($data, 'qty');
+            $avg = count($revs) > 0 ? array_sum($revs) / count($revs) : 0;
+            $variance = 0;
+            foreach ($revs as $r) $variance += pow($r - $avg, 2);
+            $stdDev = count($revs) > 1 ? sqrt($variance / (count($revs) - 1)) : 0;
+            $volatility = ($avg > 0) ? ($stdDev / $avg) : 0;
+
+            for ($i=0; $i < count($chronoPeriods); $i++) {
+                if (!isset($mlInput[$sId][$i])) {
+                    $mlInput[$sId][$i] = [
+                        'qty' => 0, 
+                        'promo' => 0, 
+                        'stockout' => 0, 
+                        'cat_momentum' => 1
+                    ];
+                }
+                $mlInput[$sId][$i]['volatility'] = (float)$volatility;
+            }
+        }
+
+        $predictions = $this->getBatchMLForecast($mlInput);
+        
+        $results = [];
+        foreach ($salesmen as $id => $s) {
+            $pred = $predictions[$id] ?? null;
+            $avgRevenue = $s->total_revenue / count($precedingIds);
+            
+            $results[] = (object) [
+                'sales_id' => $s->id,
+                'sales_name' => $s->name,
+                'avg_revenue' => $avgRevenue,
+                'total_outlets' => $s->total_outlets,
+                'total_tx' => $s->total_tx,
+                'ai_prediction' => $pred ? (float) $pred['prediction'] : $avgRevenue,
+                'ai_trend' => $pred ? $pred['trend'] : 'stable',
+                'ai_confidence' => $pred ? (float) $pred['confidence'] : 0,
+                'recent_history' => array_slice($s->history, -3) // Last 3 months for UI
+            ];
+        }
+
+        return collect($results)->sortByDesc('avg_revenue')->values();
     }
 
     // --- PILLAR 8: GUIDE ---
@@ -831,5 +1419,66 @@ class InsightController extends Controller
     public function guide()
     {
         return view('insights.guide');
+    }
+
+    protected function getMLForecast($historicalData)
+    {
+        if (!$historicalData || count($historicalData) < 2) return null;
+
+        $tempPath = storage_path('app/temp_forecast_' . uniqid() . '.csv');
+        $file = fopen($tempPath, 'w');
+        fputcsv($file, ['month', 'total', 'promo']);
+        foreach ($historicalData as $row) {
+            fputcsv($file, [$row['month'], $row['value'], $row['promo'] ?? 0]);
+        }
+        fclose($file);
+
+        $pythonPath = base_path('python_ml/python.exe');
+        $scriptPath = base_path('forecast_sales.py');
+        
+        // Use escapeshellarg for security and to handle spaces in paths
+        $cmd = "\"$pythonPath\" \"$scriptPath\" \"$tempPath\"";
+        $output = shell_exec($cmd);
+        
+        if (file_exists($tempPath)) @unlink($tempPath);
+
+        if (!$output) return null;
+
+        $result = json_decode($output, true);
+        return ($result && ($result['status'] ?? '') === 'success') ? $result : null;
+    }
+
+    protected function getBatchMLForecast($historicalData, $periodDates = [])
+    {
+        if (!$historicalData || count($historicalData) === 0) return null;
+
+        $tempPath = storage_path('app/temp_batch_forecast_' . uniqid() . '.csv');
+        $file = fopen($tempPath, 'w');
+        fputcsv($file, ['product_id', 'month_index', 'qty', 'date', 'promo', 'stockout', 'cat_momentum', 'volatility']);
+        
+        foreach ($historicalData as $pId => $months) {
+            foreach ($months as $idx => $data) {
+                $qty = is_array($data) ? ($data['qty'] ?? 0) : $data;
+                $promo = is_array($data) ? ($data['promo'] ?? 0) : 0;
+                $stockout = is_array($data) ? ($data['stockout'] ?? 0) : 0;
+                $cat_mo = is_array($data) ? ($data['cat_momentum'] ?? 1) : 1;
+                $vol = is_array($data) ? ($data['volatility'] ?? 0) : 0;
+                $dateStr = $periodDates[$idx] ?? '';
+                fputcsv($file, [$pId, $idx, $qty, $dateStr, $promo, $stockout, $cat_mo, $vol]);
+            }
+        }
+        fclose($file);
+
+        $pythonPath = base_path('python_ml/python.exe');
+        $scriptPath = base_path('forecast_inventory_batch.py');
+        $cmd = "\"$pythonPath\" \"$scriptPath\" \"$tempPath\"";
+        $output = shell_exec($cmd);
+        
+        if (file_exists($tempPath)) @unlink($tempPath);
+
+        if (!$output) return null;
+
+        $result = json_decode($output, true);
+        return ($result && ($result['status'] ?? '') === 'success') ? $result['data'] : null;
     }
 }

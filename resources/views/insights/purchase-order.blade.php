@@ -49,6 +49,9 @@
                     @endforeach
                 </select>
             </div>
+            @if($isAiMode)
+            <input type="hidden" name="mode" value="ai">
+            @endif
         </form>
     </div>
 </div>
@@ -73,7 +76,29 @@
              <span id="targetValueDisplay" style="font-weight: 800; color: var(--accent); font-size: 1.2rem; min-width: 80px;">30 Hari</span>
         </div>
     </div>
+    @if($isAiMode)
+    <div style="width: 1px; height: 50px; background: var(--border); margin: 0 1rem;"></div>
+    <div style="flex: 0 0 auto; display: flex; align-items: center; gap: 0.75rem; background: rgba(99, 102, 241, 0.1); padding: 0.75rem 1rem; border-radius: 12px; border: 1px solid rgba(99, 102, 241, 0.2);">
+        <label for="aiModeToggle" class="switch" style="position: relative; display: inline-block; width: 44px; height: 22px; margin: 0; padding: 0; cursor: pointer;">
+            <input type="checkbox" id="aiModeToggle" style="position: absolute; opacity: 0; cursor: pointer; height: 0; width: 0;">
+            <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 22px;"></span>
+        </label>
+        <div style="display: flex; flex-direction: column;">
+            <span style="font-size: 0.8rem; font-weight: 800; color: #6366f1;">🧠 SMART AI MODE</span>
+            <span style="font-size: 0.65rem; color: var(--text-muted);">Gunakan prediksi ML dibanding rata-rata</span>
+        </div>
+    </div>
+    @endif
 </div>
+
+<style>
+.switch input:checked + .slider { background-color: #6366f1 !important; }
+.switch input:checked + .slider:before { transform: translateX(22px); }
+.slider:before {
+  position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px;
+  background-color: white; transition: .4s; border-radius: 50%;
+}
+</style>
 
 <div class="main-card" style="background: var(--bg-card); border-radius: 16px; border: 1px solid var(--border); padding: 1.5rem;">
     <div style="overflow-x: auto;">
@@ -90,6 +115,9 @@
                     @endif
 
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;" title="Total Penjualan 3 Bulan / 3">AMS</th>
+                    @if($isAiMode)
+                    <th style="padding: 1rem 0.5rem; color: #6366f1; font-size: 0.75rem; text-transform: uppercase; text-align: right; background: rgba(99, 102, 241, 0.05); border-radius: 8px 8px 0 0;" title="Prediksi Machine Learning">🧠 AI Forecast</th>
+                    @endif
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: center; width: 100px;">Surge</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Ctn Size</th>
                     <th style="padding: 1rem 0.5rem; color: var(--accent); font-size: 0.85rem; text-transform: uppercase; text-align: right; font-weight: 800;">Order Recommendation</th>
@@ -114,6 +142,7 @@
                         data-ctn-size="{{ $ctnSize }}"
                         data-ams="{{ $item->avg_monthly }}"
                         data-ads="{{ $item->avg_daily }}"
+                        data-ai-forecast="{{ $item->ai_prediction }}"
                         data-qty-m1="{{ $item->qty_m1 }}"
                         data-qty-m2="{{ $item->qty_m2 }}"
                         data-qty-m3="{{ $item->qty_m3 }}"
@@ -143,10 +172,21 @@
                             <div style="font-weight: 600;">{{ number_format($item->qty_m3, 0, ',', '.') }}</div>
                             <div style="font-size: 0.65rem; color: var(--text-muted);">{{ round($item->qty_m3 / $ctnSize, 1) }} Ctn</div>
                         </td>
-
                         <td style="padding: 1rem 0.5rem; text-align: right; color: var(--accent-hover); font-size: 0.85rem; font-weight: 700;">
                             {{ number_format($item->avg_monthly, 0, ',', '.') }}
                         </td>
+
+                        @if($isAiMode)
+                        <!-- AI SMART FORECAST -->
+                        <td style="padding: 1rem 0.5rem; text-align: right; background: rgba(99, 102, 241, 0.05);">
+                            <div style="font-weight: 800; color: #6366f1; font-size: 0.85rem;" class="ai-forecast-val">
+                                {{ number_format($item->ai_prediction, 0, ',', '.') }}
+                            </div>
+                            <div style="font-size: 0.65rem; color: {{ $item->ai_trend == 'growing' ? '#10b981' : ($item->ai_trend == 'declining' ? '#ef4444' : 'var(--text-muted)') }}; font-weight: 600;">
+                                {{ $item->ai_trend == 'growing' ? '↑ Trend Naik' : ($item->ai_trend == 'declining' ? '↓ Trend Turun' : '→ Stabil') }}
+                            </div>
+                        </td>
+                        @endif
                         
                         <td style="padding: 1rem 0.5rem; text-align: center;">
                             <input type="number" class="surge-input" value="0" min="0" step="5"
@@ -185,18 +225,29 @@
 document.addEventListener('DOMContentLoaded', function() {
     const globalTargetInput = document.getElementById('globalTargetDays');
     const targetDisplay = document.getElementById('targetValueDisplay');
-    const surgeInputs = document.querySelectorAll('.surge-input');
+    const aiModeToggle = document.getElementById('aiModeToggle');
     
     function calculateOrders() {
+        const isAiMode = aiModeToggle ? aiModeToggle.checked : false;
         const targetDays = parseInt(globalTargetInput.value);
         targetDisplay.innerText = targetDays + ' Hari';
         
         document.querySelectorAll('.order-row').forEach(row => {
-            const stock = parseFloat(row.dataset.stock);
-            const ads = parseFloat(row.dataset.ads);
-            const ams = parseFloat(row.dataset.ams);
+            const stock = parseFloat(row.dataset.stock) || 0;
+            const ads = parseFloat(row.dataset.ads) || 0;
+            const ams = parseFloat(row.dataset.ams) || 0;
+            const aiForecast = parseFloat(row.dataset.aiForecast) || ams;
             const ctnSize = parseInt(row.dataset.ctnSize) || 1;
             const surge = parseFloat(row.querySelector('.surge-input').value) || 0;
+            
+            // BASE CALCULATION MODE
+            const baseMonthly = isAiMode ? aiForecast : ams;
+            const baseDaily = isAiMode ? (aiForecast / 30) : ads;
+
+            // Re-calc logic: (BaseDaily * (1 + surge/100) * targetDays) - currentStock
+            const adjustedVelocity = baseDaily * (1 + (surge / 100));
+            const totalNeed = adjustedVelocity * targetDays;
+            const recommend = Math.max(0, Math.ceil(totalNeed - stock));
             
             const m1 = parseFloat(row.dataset.qtyM1);
             const m2 = parseFloat(row.dataset.qtyM2);
@@ -205,11 +256,6 @@ document.addEventListener('DOMContentLoaded', function() {
             const n2 = row.dataset.m2Name;
             const n3 = row.dataset.m3Name;
 
-            // Re-calc logic: (ADS * (1 + surge/100) * targetDays) - currentStock
-            const adjustedVelocity = ads * (1 + (surge / 100));
-            const totalNeed = adjustedVelocity * targetDays;
-            const recommend = Math.max(0, Math.ceil(totalNeed - stock));
-            
             const orderText = row.querySelector('.order-qty-text');
             orderText.innerText = recommend.toLocaleString('id-ID');
             
@@ -220,21 +266,21 @@ document.addEventListener('DOMContentLoaded', function() {
             // Detailed Tooltip with Monthly Breakdown
             const resultCell = row.querySelector('.order-result-cell');
             const formulaDesc = `HISTORI PENJUALAN:\n` +
-                                `- ${n1}: ${m1.toLocaleString('id-ID')} pcs (${(m1/ctnSize).toFixed(1)} ctn)\n` +
-                                `- ${n2}: ${m2.toLocaleString('id-ID')} pcs (${(m2/ctnSize).toFixed(1)} ctn)\n` +
-                                `- ${n3}: ${m3.toLocaleString('id-ID')} pcs (${(m3/ctnSize).toFixed(1)} ctn)\n` +
+                                `- ${n1}: ${m1.toLocaleString('id-ID')}\n` +
+                                `- ${n2}: ${m2.toLocaleString('id-ID')}\n` +
+                                `- ${n3}: ${m3.toLocaleString('id-ID')}\n` +
                                 `-----------------------------------\n` +
-                                `RATA-RATA (AMS): ${ams.toLocaleString('id-ID', {maximumFractionDigits:0})} /bln\n\n` +
+                                `${isAiMode ? '🤖 AI PREDICTION' : 'RATA-RATA (AMS)'}: ${baseMonthly.toLocaleString('id-ID', {maximumFractionDigits:0})} /bln\n\n` +
                                 `PERHITUNGAN ORDER:\n` +
-                                `- Target (${targetDays} hari): ${(ads * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
-                                `- Lonjakan (${surge}%): +${((ads * surge/100) * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
+                                `- Target (${targetDays} hari): ${(baseDaily * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
+                                `- Lonjakan (${surge}%): +${((baseDaily * surge/100) * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
                                 `- Stok Saat Ini: -${stock.toLocaleString('id-ID')} pcs\n` +
                                 `=========================\n` +
                                 `REKOMENDASI: ${recommend.toLocaleString('id-ID')} pcs (${ctnValue} ctn)`;
             resultCell.title = formulaDesc;
             
             if (recommend > 0) {
-                orderText.parentElement.parentElement.style.background = 'rgba(0, 153, 255, 0.05)';
+                orderText.parentElement.parentElement.style.background = isAiMode ? 'rgba(99, 102, 241, 0.05)' : 'rgba(0, 153, 255, 0.05)';
             } else {
                 orderText.parentElement.parentElement.style.background = 'transparent';
             }
@@ -242,6 +288,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     globalTargetInput.addEventListener('input', calculateOrders);
+    aiModeToggle.addEventListener('change', calculateOrders);
+    const surgeInputs = document.querySelectorAll('.surge-input');
     surgeInputs.forEach(input => input.addEventListener('input', calculateOrders));
     
     window.exportToExcel = function() {

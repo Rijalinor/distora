@@ -42,14 +42,18 @@ Route::middleware('auth')->group(function () {
     Route::get('/analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
     Route::prefix('insights')->group(function () {
         Route::get('/', [InsightController::class, 'index'])->name('insights.index');
+        Route::get('/ai-dashboard', [InsightController::class, 'aiDashboard'])->name('insights.ai-dashboard');
         Route::get('/rfm', [InsightController::class, 'rfm'])->name('insights.rfm');
         Route::get('/bundling', [InsightController::class, 'bundling'])->name('insights.bundling');
         Route::get('/discounts', [InsightController::class, 'discounts'])->name('insights.discounts');
         Route::get('/anomalies', [InsightController::class, 'anomalies'])->name('insights.anomalies');
+        Route::get('/ai-advisor', [InsightController::class, 'aiAdvisor'])->name('insights.ai-advisor');
+        Route::get('/salesman-audit', [InsightController::class, 'salesmanAudit'])->name('insights.salesman-audit');
         Route::get('/stock-forecast', [InsightController::class, 'stockForecast'])->name('insights.stock-forecast');
         Route::get('/purchase-order', [InsightController::class, 'purchaseOrder'])->name('insights.purchase-order');
         Route::get('/principal-report', [InsightController::class, 'principalReport'])->name('insights.principal-report');
         Route::get('/dead-stock', [InsightController::class, 'deadStock'])->name('insights.dead-stock');
+        Route::get('/salesman-intelligence', [InsightController::class, 'salesmanIntelligence'])->name('insights.salesman-intelligence');
 
         Route::get('/growth', [InsightController::class, 'growth'])->name('insights.growth');
         Route::get('/guide', [InsightController::class, 'guide'])->name('insights.guide');

@@ -20,6 +20,16 @@
         
         <div style="width: 1px; height: 20px; background: var(--border);"></div>
 
+        <label for="principle" style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Prinsipel:</label>
+        <select name="principle" id="principle" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer; max-width: 150px;">
+            <option value="all" {{ $selected_principle === 'all' ? 'selected' : '' }}>Semua Prinsipel</option>
+            @foreach($allPrinciples as $p)
+                <option value="{{ $p }}" {{ $selected_principle === $p ? 'selected' : '' }}>{{ $p }}</option>
+            @endforeach
+        </select>
+
+        <div style="width: 1px; height: 20px; background: var(--border);"></div>
+
         <label for="branch" style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Wilayah:</label>
         <select name="branch" id="branch" onchange="this.form.submit()" style="padding: 0.4rem; border: none; background: transparent; color: var(--text-primary); font-weight: 700; outline: none; cursor: pointer;">
             <option value="all" {{ $selected_branch === 'all' ? 'selected' : '' }}>Semua Cabang</option>
