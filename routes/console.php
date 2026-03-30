@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 // Schedule the daily salesman recap report
 Schedule::command('distora:daily-recap')->dailyAt('17:00');
+Schedule::command('distora:ml-evaluate --limit=1000')->hourly();

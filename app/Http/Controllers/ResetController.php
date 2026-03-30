@@ -120,7 +120,7 @@ class ResetController extends Controller
     {
         $request->validate([
             'month' => 'required|integer|min:1|max:12',
-            'year' => 'required|integer|min:2020|max:2030',
+            'year' => 'required|integer|min:2020|max:' . (now()->year + 5),
         ]);
 
         $date = \Carbon\Carbon::create($request->year, $request->month, 1);

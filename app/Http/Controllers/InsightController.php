@@ -10,8 +10,11 @@ use App\Models\Product;
 use App\Models\Stock;
 use App\Models\Period;
 use App\Models\UploadHistory;
+use App\Models\MlForecastRun;
+use App\Services\MlForecastEvaluator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class InsightController extends Controller
@@ -28,7 +31,7 @@ class InsightController extends Controller
     {
         // Unique cache key based on period and branch
         $branch = request()->query('branch', 'all');
-        $fullKey = "insight_{$key}_{$period->id}_{$branch}_" . md5(json_encode(request()->all()));
+        $fullKey = "insight_v2_{$key}_{$period->id}_{$branch}_" . md5(json_encode(request()->all()));
 
         if ($period->status === 'closed') {
             // Historical data never changes - cache forever in file
@@ -53,14 +56,55 @@ class InsightController extends Controller
 
     private function get3MonthRange(\App\Models\Period $period)
     {
-        // For March selection, we want IDs of Dec, Jan, Feb periods
-        return $period->getPrecedingIds(3);
+        // 3-month window that includes the selected period.
+        $ids = array_merge([$period->id], $period->getPrecedingIds(2));
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * ML lookback window (up to N historical periods if available).
+     */
+    private function getMlLookbackRange(\App\Models\Period $period, int $maxMonths = 24): array
+    {
+        return $period->getPrecedingIds($maxMonths);
     }
 
     private function getCutoffDate($period = null)
     {
         // No longer needed for date-based window, returning null or dummy
         return null;
+    }
+
+    private function recordForecastRun(array $payload): void
+    {
+        try {
+            $key = [
+                'context' => $payload['context'] ?? 'unknown',
+                'period_id' => $payload['period_id'] ?? null,
+                'branch' => $payload['branch'] ?? null,
+                'scope_key' => $payload['scope_key'] ?? null,
+                'entity_type' => $payload['entity_type'] ?? null,
+                'entity_id' => isset($payload['entity_id']) ? (string) $payload['entity_id'] : null,
+            ];
+
+            MlForecastRun::updateOrCreate($key, [
+                'entity_name' => $payload['entity_name'] ?? null,
+                'model' => $payload['model'] ?? null,
+                'is_ml' => (bool) ($payload['is_ml'] ?? false),
+                'prediction' => $payload['prediction'] ?? null,
+                'prediction_low' => $payload['prediction_low'] ?? null,
+                'prediction_high' => $payload['prediction_high'] ?? null,
+                'confidence' => $payload['confidence'] ?? null,
+                'wape' => $payload['wape'] ?? null,
+                'mape' => $payload['mape'] ?? null,
+                'mae' => $payload['mae'] ?? null,
+                'rmse' => $payload['rmse'] ?? null,
+                'forecasted_at' => now(),
+                'meta' => $payload['meta'] ?? null,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to record ML forecast run', ['error' => $e->getMessage()]);
+        }
     }
 
     public function aiDashboard(Request $request)
@@ -74,6 +118,50 @@ class InsightController extends Controller
         $advisorCount = count($advisorData);
 
         return view('insights.ai-dashboard', compact('activePeriod', 'allPeriods', 'branch', 'advisorCount'));
+    }
+
+    public function mlMonitor(Request $request)
+    {
+        $activePeriod = $this->getSelectedPeriod($request);
+        $branch = $request->query('branch', 'all');
+        $context = $request->query('context', 'all');
+
+        app(MlForecastEvaluator::class)->evaluatePending($activePeriod->id ?? null, $context, $branch, 800);
+
+        $query = MlForecastRun::query()
+            ->when($activePeriod?->id, fn ($q) => $q->where('period_id', $activePeriod->id))
+            ->when($branch !== 'all', fn ($q) => $q->where('branch', $branch))
+            ->when($context !== 'all', fn ($q) => $q->where('context', $context));
+
+        $rows = (clone $query)->orderByDesc('forecasted_at')->limit(300)->get();
+
+        $summary = [
+            'total_runs' => $rows->count(),
+            'ml_runs' => $rows->where('is_ml', true)->count(),
+            'avg_confidence' => round((float) ($rows->avg('confidence') ?? 0), 2),
+            'avg_wape' => round((float) ($rows->whereNotNull('wape')->avg('wape') ?? 0), 2),
+            'evaluated_runs' => $rows->whereNotNull('actual_value')->count(),
+            'avg_error_pct' => round((float) ($rows->whereNotNull('error_pct')->avg('error_pct') ?? 0), 2),
+        ];
+
+        $byContext = $rows->groupBy('context')->map(function ($items) {
+            return [
+                'count' => $items->count(),
+                'avg_confidence' => round((float) ($items->avg('confidence') ?? 0), 2),
+                'avg_wape' => round((float) ($items->whereNotNull('wape')->avg('wape') ?? 0), 2),
+            ];
+        })->sortByDesc('count');
+
+        return view('insights.ml-monitor', [
+            'rows' => $rows,
+            'summary' => $summary,
+            'byContext' => $byContext,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => Period::ordered()->get(),
+            'selected_branch' => $branch,
+            'selected_context' => $context,
+            'contexts' => MlForecastRun::query()->distinct()->orderBy('context')->pluck('context'),
+        ]);
     }
 
     public function index(Request $request)
@@ -197,8 +285,8 @@ class InsightController extends Controller
             'activePeriod' => $activePeriod,
             'allPeriods' => \App\Models\Period::ordered()->get(),
             'summary' => [
-                'sultans' => $rfm->where('segment', 'Sultan (High Priority)')->count(),
-                'sleepers' => $rfm->where('segment', 'Sleeper (Risk)')->count(),
+                'sultans' => $rfm->where('segment', 'Champion')->count(),
+                'sleepers' => $rfm->where('segment', 'Sleeper')->count(),
             ]
         ]);
     }
@@ -298,7 +386,7 @@ class InsightController extends Controller
                     'total_net' => $items->sum('net_sales'),
                     'avg_ratio' => $items->sum('gross_sales') > 0 ? ($items->sum('total_discount') / $items->sum('gross_sales')) * 100 : 0,
                     'type_breakdown' => [
-                        'Item' => (float)$items->sum('total_discount'),
+                        'Item' => (float)$items->sum('disc_item'),
                         'Invoice' => (float)$items->sum('disc_other'),
                     ]
                 ];
@@ -375,7 +463,7 @@ class InsightController extends Controller
                     'total_net' => $principlesRaw->sum('net_sales'),
                     'avg_ratio' => $totalGross > 0 ? ($totalDisc / $totalGross) * 100 : 0,
                     'type_breakdown' => [
-                        'Item' => (float)$principlesRaw->sum('total_discount'),
+                        'Item' => (float)$principlesRaw->sum('disc_item'),
                         'Lainnya' => (float)$principlesRaw->sum(fn($p) => $p->disc_internal + $p->disc_external + $p->disc_invoice),
                     ]
                 ];
@@ -423,10 +511,10 @@ class InsightController extends Controller
                     $actions[] = "🔥 **Audit High Burner**: Prinsipel `" . $highestBurner->principle . "` memiliki rasio " . number_format($highestBurner->discount_ratio, 1) . "%. Segera evaluasi apakah pertumbuhan omzet sebanding dengan subsidi promo.";
                 }
 
-                $invoiceDisc = $summary['type_breakdown']['Invoice'] ?? 0;
+                $invoiceDisc = $summary['type_breakdown']['Lainnya'] ?? 0;
                 $totalDiscValue = $summary['total_discount'];
-                if ($totalDiscValue > 0 && ($invoiceDisc / $totalDiscValue) > 0.4) {
-                    $actions[] = "🕵️ **Kebocoran Invoice**: Diskon faktur (Invoice) mendominasi budget promo. Supervisor disarankan mengaudit laporan 'Diskon Khusus' untuk mendeteksi penyalahgunaan delegasi harga.";
+                if ($invoiceDisc > 0 && $totalDiscValue > 0 && ($invoiceDisc / $totalDiscValue) > 0.4) {
+                    $actions[] = "🕵️ **Audit Diskon Non-Item**: Komponen diskon selain item cukup besar dibanding promo item. Supervisor disarankan audit diskon internal/external/invoice.";
                 }
             } else {
                 $topItem = $principlesColl->sortByDesc('discount_ratio')->first();
@@ -507,7 +595,7 @@ class InsightController extends Controller
     private function getAiAdvisorData($branch, $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        $precedingIds = $period->getPrecedingIds(3);
+        $precedingIds = $this->get3MonthRange($period);
         $cards = [];
 
         // 1. ANOMALY: High Returns
@@ -521,8 +609,9 @@ class InsightController extends Controller
                 DB::raw('ABS(SUM(CASE WHEN sales.total < 0 THEN sales.total ELSE 0 END)) as returns')
             )
             ->groupBy('salesman')
-            ->having('gross', '>', 0)
-            ->get();
+            ->having('gross', '>', 0);
+        $this->applyBranchFilter($returns, $branch);
+        $returns = $returns->get();
 
         foreach ($returns as $r) {
             $rate = ($r->returns / $r->gross) * 100;
@@ -593,7 +682,7 @@ class InsightController extends Controller
     private function getAnomaliesData($branch, $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        $precedingIds = $period->getPrecedingIds(3);
+        $precedingIds = $this->get3MonthRange($period);
 
         $query = Transaction::join('sales', 'transactions.id', '=', 'sales.transaction_id')
             ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
@@ -649,7 +738,7 @@ class InsightController extends Controller
     private function getStockForecastData($branch, $principle = 'all', $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        $precedingIds = $period->getPrecedingIds(3);
+        $precedingIds = $this->get3MonthRange($period);
         if (count($precedingIds) < 3) return [];
 
         $query = Sale::join('products', 'sales.product_id', '=', 'products.id')
@@ -729,7 +818,7 @@ class InsightController extends Controller
             ->distinct()
             ->pluck('name')->filter()->sort()->values();
 
-        $orderSuggestions = $this->cachedResult('purchase_order_v8', $activePeriod, function() use ($branch, $principle, $activePeriod) {
+        $orderSuggestions = $this->cachedResult('purchase_order_v10', $activePeriod, function() use ($branch, $principle, $activePeriod) {
             return $this->getPurchaseOrderData($branch, $principle, $activePeriod);
         });
 
@@ -747,8 +836,8 @@ class InsightController extends Controller
     private function getPurchaseOrderData($branch, $principle = 'all', $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        $precedingIds = $period->getPrecedingIds(6);
-        if (count($precedingIds) < 2) return [];
+        $precedingIds = $this->getMlLookbackRange($period, 24);
+        if (count($precedingIds) < 3) return [];
 
         // For UI display, we still want the last 3
         $displayIds = $period->getPrecedingIds(3);
@@ -760,6 +849,7 @@ class InsightController extends Controller
             ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
             ->leftJoin('products', 'sales.product_id', '=', 'products.id')
             ->whereIn('upload_histories.period_id', $precedingIds)
+            ->where('sales.qty', '>', 0)
             ->select(
                 'products.id', 'products.name', 'products.category', 'upload_histories.period_id',
                 DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle_name"),
@@ -912,8 +1002,6 @@ class InsightController extends Controller
 
         $aiPredictions = $this->getBatchMLForecast($mlInput, $periodDates);
 
-        $aiPredictions = $this->getBatchMLForecast($mlInput, $periodDates);
-
         foreach ($salesVelocity as $productId => $salesData) {
             $stock = isset($currentStocks[$productId]) ? $currentStocks[$productId]->current_stock : 0;
             $avgDaily = $salesData->total_qty_sold / (count($precedingIds) * 30);
@@ -940,8 +1028,34 @@ class InsightController extends Controller
                 'ai_prediction' => $aiData ? (float) $aiData['prediction'] : $avgMonthly,
                 'ai_trend' => $aiData ? $aiData['trend'] : 'stable',
                 'ai_confidence' => $aiData ? (float) $aiData['confidence'] : 0,
+                'ai_low' => $aiData['prediction_interval']['low'] ?? null,
+                'ai_high' => $aiData['prediction_interval']['high'] ?? null,
+                'ai_model' => $aiData['model'] ?? 'fallback_avg',
+                'ai_wape' => $aiData['validation']['wape'] ?? null,
                 'is_ml' => $aiData ? (bool) $aiData['is_ml'] : false
             ];
+
+            if ($aiData) {
+                $this->recordForecastRun([
+                    'context' => 'purchase_order_product',
+                    'period_id' => $period->id ?? null,
+                    'branch' => $branch,
+                    'scope_key' => $principle,
+                    'entity_type' => 'product',
+                    'entity_id' => $productId,
+                    'entity_name' => $salesData->name,
+                    'model' => $aiData['model'] ?? null,
+                    'is_ml' => $aiData['is_ml'] ?? false,
+                    'prediction' => $aiData['prediction'] ?? null,
+                    'prediction_low' => $aiData['prediction_interval']['low'] ?? null,
+                    'prediction_high' => $aiData['prediction_interval']['high'] ?? null,
+                    'confidence' => $aiData['confidence'] ?? null,
+                    'wape' => $aiData['validation']['wape'] ?? null,
+                    'mape' => $aiData['validation']['mape'] ?? null,
+                    'mae' => $aiData['validation']['mae'] ?? null,
+                    'rmse' => $aiData['validation']['rmse'] ?? null,
+                ]);
+            }
         }
         return $results;
     }
@@ -974,7 +1088,7 @@ class InsightController extends Controller
     private function getDeadStockData($branch, $period = null, $principle = 'all')
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        $precedingIds = $period->getPrecedingIds(3);
+        $precedingIds = $this->get3MonthRange($period);
 
         $soldProductIds = Sale::join('transactions', 'sales.transaction_id', '=', 'transactions.id')
             ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
@@ -1254,6 +1368,27 @@ class InsightController extends Controller
 
             // 10. ML Forecast
             $forecast = $this->getMLForecast($growthSeries);
+            if ($forecast) {
+                $this->recordForecastRun([
+                    'context' => 'principal_report',
+                    'period_id' => $activePeriod->id ?? null,
+                    'branch' => $branch,
+                    'scope_key' => $selectedPrinciple,
+                    'entity_type' => 'principle',
+                    'entity_id' => $principleId ?: $selectedPrinciple,
+                    'entity_name' => $selectedPrinciple,
+                    'model' => $forecast['model'] ?? null,
+                    'is_ml' => $forecast['is_ml'] ?? false,
+                    'prediction' => $forecast['prediction'] ?? null,
+                    'prediction_low' => $forecast['prediction_interval']['low'] ?? null,
+                    'prediction_high' => $forecast['prediction_interval']['high'] ?? null,
+                    'confidence' => $forecast['confidence'] ?? null,
+                    'wape' => $forecast['validation']['wape'] ?? null,
+                    'mape' => $forecast['validation']['mape'] ?? null,
+                    'mae' => $forecast['validation']['mae'] ?? null,
+                    'rmse' => $forecast['validation']['rmse'] ?? null,
+                ]);
+            }
 
             return compact('summary', 'trend', 'growthSeries', 'topProducts', 'topOutlets', 'topSalesmen', 'cityAnalysis', 'growthVal', 'currVal', 'sleepers', 'returns', 'forecast');
         });
@@ -1284,22 +1419,21 @@ class InsightController extends Controller
     public function salesmanIntelligence(Request $request)
     {
         $branch = $request->get('branch', 'all');
-        $periodId = $request->get('period_id');
-        $activePeriod = $periodId ? Period::find($periodId) : $this->getActivePeriod();
-        
+        $activePeriod = $this->getSelectedPeriod($request);
+
         $allPeriods = Period::orderBy('id', 'desc')->get();
 
         $data = $this->cachedResult('salesman_intel_v1', $activePeriod, function() use ($branch, $activePeriod) {
             return $this->getSalesmanIntelligenceData($branch, $activePeriod);
-        }, $branch);
+        });
 
         return view('insights.salesman-intelligence', compact('data', 'activePeriod', 'branch', 'allPeriods'));
     }
 
     private function getSalesmanIntelligenceData($branch, $period)
     {
-        $precedingIds = $period->getPrecedingIds(6);
-        if (count($precedingIds) < 1) return [];
+        $precedingIds = $this->getMlLookbackRange($period, 24);
+        if (count($precedingIds) < 3) return [];
 
         $chronoPeriods = array_reverse($precedingIds);
         $periodMap = array_flip($chronoPeriods);
@@ -1407,8 +1541,33 @@ class InsightController extends Controller
                 'ai_prediction' => $pred ? (float) $pred['prediction'] : $avgRevenue,
                 'ai_trend' => $pred ? $pred['trend'] : 'stable',
                 'ai_confidence' => $pred ? (float) $pred['confidence'] : 0,
+                'ai_low' => $pred['prediction_interval']['low'] ?? null,
+                'ai_high' => $pred['prediction_interval']['high'] ?? null,
+                'ai_model' => $pred['model'] ?? 'fallback_avg',
+                'ai_wape' => $pred['validation']['wape'] ?? null,
                 'recent_history' => array_slice($s->history, -3) // Last 3 months for UI
             ];
+
+            if ($pred) {
+                $this->recordForecastRun([
+                    'context' => 'salesman_intelligence',
+                    'period_id' => $period->id ?? null,
+                    'branch' => $branch,
+                    'entity_type' => 'salesman',
+                    'entity_id' => $s->id,
+                    'entity_name' => $s->name,
+                    'model' => $pred['model'] ?? null,
+                    'is_ml' => $pred['is_ml'] ?? false,
+                    'prediction' => $pred['prediction'] ?? null,
+                    'prediction_low' => $pred['prediction_interval']['low'] ?? null,
+                    'prediction_high' => $pred['prediction_interval']['high'] ?? null,
+                    'confidence' => $pred['confidence'] ?? null,
+                    'wape' => $pred['validation']['wape'] ?? null,
+                    'mape' => $pred['validation']['mape'] ?? null,
+                    'mae' => $pred['validation']['mae'] ?? null,
+                    'rmse' => $pred['validation']['rmse'] ?? null,
+                ]);
+            }
         }
 
         return collect($results)->sortByDesc('avg_revenue')->values();

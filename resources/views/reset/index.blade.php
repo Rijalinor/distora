@@ -21,7 +21,7 @@
         <!-- Create New Period -->
         <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border-left: 4px solid var(--accent);">
             <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 1rem; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem;">
-                <span>➕ Tambah Periode Baru (Bulan Lalu)</span>
+                <span>➕ Tambah Periode Baru (Historis / Masa Depan)</span>
             </div>
             <form action="{{ route('periods.store') }}" method="POST" style="display: flex; gap: 0.75rem; align-items: flex-end;">
                 @csrf
@@ -38,7 +38,7 @@
                 <div style="flex: 1;">
                     <label style="display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.35rem;">Tahun</label>
                     <select name="year" class="btn btn-ghost" style="width: 100%; text-align: left; background: var(--bg-input);">
-                        @foreach(range(now()->year - 1, now()->year + 1) as $y)
+                        @foreach(range(now()->year + 2, 2020) as $y)
                             <option value="{{ $y }}" {{ $y == now()->year ? 'selected' : '' }}>{{ $y }}</option>
                         @endforeach
                     </select>

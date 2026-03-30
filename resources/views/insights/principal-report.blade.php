@@ -114,8 +114,23 @@
                     Confidence: <strong>{{ $forecast['confidence'] }}%</strong>
                 </span>
             </div>
+            @if(isset($forecast['prediction_interval']))
+            <div style="margin-top: 0.6rem; font-size: 0.75rem; color: #cbd5e1;">
+                Range: <strong>Rp {{ number_format(($forecast['prediction_interval']['low'] ?? 0)/1000000, 1) }}jt</strong>
+                -
+                <strong>Rp {{ number_format(($forecast['prediction_interval']['high'] ?? 0)/1000000, 1) }}jt</strong>
+            </div>
+            @endif
+            @if(isset($forecast['model']))
+            <div style="margin-top: 0.35rem; font-size: 0.7rem; color: var(--text-muted);">
+                Model: <strong style="text-transform: uppercase;">{{ $forecast['model'] }}</strong>
+                @if(isset($forecast['validation']['wape']))
+                    | WAPE: <strong>{{ $forecast['validation']['wape'] }}%</strong>
+                @endif
+            </div>
+            @endif
             <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 1rem; line-height: 1.4;">
-                *Dihitung menggunakan Linear Regression pada data {{ count($growthSeries) }} bulan terakhir.
+                *Forecast berbasis seleksi model otomatis pada data {{ count($growthSeries) }} bulan terakhir.
             </p>
         </div>
         @endif

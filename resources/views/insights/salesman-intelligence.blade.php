@@ -99,6 +99,17 @@
                             <div style="font-size: 0.7rem; color: {{ $ratio >= 0 ? '#10b981' : '#ef4444' }}; font-weight: 700;">
                                 {{ $ratio >= 0 ? '+' : '' }}{{ round($ratio, 1) }}% vs Rerata
                             </div>
+                            @if(!is_null($s->ai_low) && !is_null($s->ai_high))
+                                <div style="font-size: 0.65rem; color: var(--text-muted);">
+                                    Range: Rp {{ number_format($s->ai_low, 0, ',', '.') }} - Rp {{ number_format($s->ai_high, 0, ',', '.') }}
+                                </div>
+                            @endif
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">
+                                {{ strtoupper($s->ai_model ?? 'fallback') }}
+                                @if(!is_null($s->ai_wape))
+                                    | WAPE {{ number_format($s->ai_wape, 1, ',', '.') }}%
+                                @endif
+                            </div>
                         </td>
                         <td style="padding: 1rem; text-align: center;">
                             @if($s->ai_trend === 'growing')
@@ -132,8 +143,8 @@
     <h4 style="font-size: 0.9rem; color: #6366f1; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">📖 Cara Membaca Analisis Salesman</h4>
     <ul style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.6; padding-left: 1.2rem;">
         <li><strong>AI Run Rate:</strong> Estimasi pencapaian total bulan depan berdasarkan pola penjualan 6 bulan terakhir.</li>
-        <li><strong>Tren Pertumbuhan:</strong> Dihitung menggunakan <em>Weighted Linear Regression</em>, di mana performa bulan terbaru memiliki pengaruh lebih besar.</li>
-        <li><strong>Confidence:</strong> Semakin tinggi persentasenya, semakin konsisten pola penjualan salesman tersebut (semakin akurat prediksinya).</li>
+        <li><strong>Tren Pertumbuhan:</strong> Dihitung dari model terbaik hasil seleksi otomatis (Linear, Ridge, atau Random Forest).</li>
+        <li><strong>Confidence:</strong> Berasal dari error validasi (WAPE), bukan sekadar skor training.</li>
     </ul>
 </div>
 @endsection

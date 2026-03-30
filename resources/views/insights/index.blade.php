@@ -170,6 +170,14 @@
         <div class="pillar-desc">Asisten pintar yang memberikan saran tindakan nyata berdasarkan anomali, stok, dan peluang pasar.</div>
         <div class="pillar-stat" style="color: var(--accent); background: rgba(99, 102, 241, 0.1);">💡 {{ $data['summary']['advisor'] }} Saran Tindakan</div>
     </a>
+
+    <!-- Pillar 9: ML Monitor -->
+    <a href="{{ route('insights.ml-monitor', ['branch' => $data['selected_branch'], 'period_id' => $activePeriod->id]) }}" class="pillar-card" style="border-top: 4px solid #22d3ee;">
+        <div class="pillar-icon">📊</div>
+        <div class="pillar-title">ML Monitoring</div>
+        <div class="pillar-desc">Pantau akurasi model, confidence, WAPE, dan histori run forecast secara real-time.</div>
+        <div class="pillar-stat" style="color: #06b6d4; background: rgba(6, 182, 212, 0.1);">⚙️ Model Health</div>
+    </a>
 </div>
 
 

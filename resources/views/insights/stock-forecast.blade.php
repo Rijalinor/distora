@@ -72,6 +72,8 @@
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase;">Prinsipel / Produk</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Stok Fisik</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">ADS (Normal)</th>
+                    <th style="padding: 1rem 0.5rem; color: #6366f1; font-size: 0.75rem; text-transform: uppercase; text-align: right;">AI Demand Bulan Depan</th>
+                    <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">AI Range</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: center; width: 140px;">Simulasi Lonjakan (%)</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Ketahanan</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: center;">Status</th>
@@ -91,6 +93,24 @@
                         </td>
                         <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-secondary); font-size: 0.85rem;">
                             {{ number_format($item->avg_daily, 1, ',', '.') }}/hari
+                        </td>
+                        <td style="padding: 1rem 0.5rem; text-align: right; background: rgba(99, 102, 241, 0.03);">
+                            <div style="font-weight: 800; color: #6366f1; font-size: 0.9rem;">
+                                {{ number_format($item->ai_prediction, 1, ',', '.') }}
+                            </div>
+                            <div style="font-size: 0.68rem; color: var(--text-muted);">
+                                {{ strtoupper($item->ai_model ?? 'fallback') }} | {{ number_format($item->ai_confidence ?? 0, 1, ',', '.') }}%
+                            </div>
+                        </td>
+                        <td style="padding: 1rem 0.5rem; text-align: right; color: var(--text-secondary); font-size: 0.78rem;">
+                            @if(!is_null($item->ai_low) && !is_null($item->ai_high))
+                                {{ number_format($item->ai_low, 1, ',', '.') }} - {{ number_format($item->ai_high, 1, ',', '.') }}
+                                @if(!is_null($item->ai_wape))
+                                    <div style="font-size: 0.65rem; color: var(--text-muted);">WAPE {{ number_format($item->ai_wape, 1, ',', '.') }}%</div>
+                                @endif
+                            @else
+                                -
+                            @endif
                         </td>
                         <td style="padding: 1rem 0.5rem; text-align: center;">
                             <div style="display: flex; align-items: center; gap: 0.5rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; padding: 0.25rem 0.5rem;">
