@@ -1,156 +1,120 @@
-<p align="center">
-  <img src="public/favicon.ico" alt="Distora Logo" width="80" height="80">
-</p>
+﻿# Distora Analytics
 
-<h1 align="center">Distora Analytics</h1>
+Distora Analytics adalah sistem analitik distribusi berbasis Laravel untuk upload data penjualan, monitoring KPI, dan pengambilan keputusan berbasis data.
 
-<p align="center">
-  <strong>Advanced Sales & Data Analytics Dashboard for Enterprise</strong><br>
-  Built with Laravel 12.0
-</p>
+## Tech Stack
+- Laravel 12
+- PHP 8.2+
+- MySQL 8+
+- Python (engine forecast ML)
+- Chart.js (visual analytics)
 
----
+## Fitur Utama
+- Import data transaksi massal dari Excel (`.xlsx`)
+- RBAC: `admin` dan `salesman` dengan akses terpisah
+- Dashboard KPI dan laporan analitik
+- Tutup Buku & manajemen periode bulanan
+- Pusat Kendali Keputusan (DSS):
+  - Segmentasi toko (RFM)
+  - Bundling produk
+  - Stok kritis
+  - Rekomendasi order pabrik
+  - Stok mati
+  - Growth monitoring
+  - Analisis diskon
+  - Audit anomali
 
-## 📌 Deskripsi Singkat
+## Upgrade ML yang Sudah Aktif
+- Forecast engine Python sudah ditingkatkan dengan:
+  - Auto model selection (`linear`, `ridge`, `random_forest`)
+  - Walk-forward validation
+  - Metrik `MAE`, `RMSE`, `MAPE`, `WAPE`
+  - Confidence score + prediction interval (`low` / `high`)
+  - Fallback aman untuk data tipis / nol
+- Integrasi hasil ML ke menu Insight (termasuk model dan confidence)
 
-**Distora Analytics** adalah sistem pelaporan dan analitik penjualan kelas *enterprise* yang dirancang khusus untuk mengelola, menganalisis, dan memvisualisasikan data transaksi penjualan & retur dari file Excel secara massal. Sistem ini mempermudah pimpinan dan tim sales dalam memantau target KPI, pertumbuhan laba, performa produk, dan produktivitas setiap tenaga penjual.
+## ML Monitoring Dashboard
+Menu: `Insights -> ML Monitoring`
 
-### Fitur Utama:
-- 📊 **Smart Excel Importer**: Fitur *upload* data transaksi besar-besaran dengan sistem validasi, format massal, dan proteksi memori, langsung membaca file `.xlsx` distributor/principal.
-- 👥 **Role-Based Access Control (RBAC)**: Pemisahan hak akses antara **Admin** (kendali penuh) dan **Salesman** (hanya melihat KPI dan riwayat pelanggan mereka sendiri).
-- 📈 **Personalized Salesman Dashboard**: Layar khusus *mobile-friendly* bagi *salesman* untuk melacak progres % KPI, daftar toko yang di-cover, dan detail penjualan secara *real-time*.
-- 📉 **Comprehensive Reports & Analytics**: 12+ format laporan siap pakai menggunakan Chart.js (Summary Omzet, Top Sales, Slow Moving, Retur, dll).
-- 📅 **Sistem Tutup Buku**: Manajemen *Period* yang mengamankan integritas data bulanan agar laporan tidak tumpang tindih.
-- ✉️ **Automated Daily Email Recap**: Robot yang mengirimkan performa tutup harian (Omzet, Top Produk, dan Target Achievers) langsung ke email Admin/Manager setiap jam 5 sore.
-- 💡 **Pusat Kendali Keputusan (DSS)**: 8 Pilar intelijen bisnis untuk membantu Supervisor mengambil keputusan cepat:
-    1. **RFM**: Segmentasi Outlet (Sultan/Sleeper).
-    2. **Bundling**: Rekomendasi pasangan produk laku.
-    3. **Stok Kritis**: Pantau barang habis dlm 1-3 hari.
-    4. **Order Pabrik**: Simulasi belanja otomatis ke pabrik dg hitungan **Karton (Ctn)** & Export Excel.
-    5. **Stok Mati**: Identifikasi aset modal macet.
-    6. **Growth**: Tren omzet mingguan per pabrikan.
-    7. **Diskon**: Evaluasi rasio promo vs profit.
-    8. **Audit**: Deteksi anomali/kecurangan retur.
+Ringkasan yang ditampilkan:
+- Total run
+- ML run vs fallback run
+- Average confidence
+- Average WAPE
+- Average forecast error
+- Log run terbaru per entitas
 
----
+Tambahan:
+- Tooltip hover untuk membantu membaca setiap metrik
+- Filter periode, cabang, dan konteks
 
-## 💻 Persyaratan Server (Requirements)
+## Evaluasi Forecast vs Aktual
+Sistem menyimpan log prediksi ke tabel `ml_forecast_runs` lalu mengevaluasi saat aktual tersedia.
 
-Sebelum melakukan instalasi, pastikan *Environment/Server* kamu memenuhi spesifikasi berikut:
-- **PHP** >= 8.2
-- **Composer** v2+
-- **MySQL** >= 8.0 (atau MariaDB setara)
-- Ekstensi PHP: `mbstring`, `zip`, `pdo_mysql`, `gd`, `xml`, `curl`. (Cek di `php.ini`).
+Command manual evaluasi:
+```bash
+php artisan distora:ml-evaluate --limit=1000
+```
 
----
+Scheduler:
+- Sudah dijadwalkan jalan otomatis tiap jam via `schedule` Laravel.
 
-## 🚀 Panduan Instalasi (Lokal / Windows XAMPP)
+## Periode Historis
+Menu Tutup Buku sekarang mendukung tahun historis lebih panjang (mis. 2024 dan sebelumnya sesuai rentang konfigurasi backend), sehingga data lama bisa tetap diarsipkan dan dibaca untuk analitik/ML.
 
-Ikuti langkah-langkah di bawah ini untuk menjalankan Distora secara lokal di komputer Windows atau Mac kamu:
+## Catatan Logika Bisnis
+- Logika diskon menggunakan `disc_item` sebagai sumber nilai diskon utama.
+- Perhitungan analitik periode sudah disesuaikan agar range data konsisten dengan periode aktif yang dipilih.
 
-### 1. Clone Repositori
-Jalankan perintah ini di Terminal (Git Bash atau CMD):
+## Instalasi Lokal (XAMPP/Windows)
+1. Clone repo
 ```bash
 git clone https://github.com/Rijalinor/distora.git
 cd distora
 ```
 
-### 2. Install Dependensi PHP
-Jalankan Composer untuk mengunduh semua library core Laravel:
+2. Install dependency
 ```bash
 composer install
 ```
 
-### 3. Konfigurasi Environment (`.env`)
-Salin file konfigurasi bawaan dan ubah namanya menjadi `.env`:
+3. Setup environment
 ```bash
 cp .env.example .env
-```
-Buka file `.env` di Code Editor kamu, dan sesuaikan detail Database MySQL-nya:
-```env
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=distora2
-DB_USERNAME=root
-DB_PASSWORD=
-```
-*(Catatan: Buat database kosong bernama `distora2` di phpMyAdmin sebelum lanjut ke langkah ke-5).*
-
-### 4. Generate Application Key
-```bash
 php artisan key:generate
 ```
 
-### 5. Setup Database & Akun Default (Migrasi)
-Jalankan file migrasi untuk membentuk struktur tabel secara otomatis, sekaligus mengisi data awal (seeder):
+4. Konfigurasi database di `.env`, lalu jalankan migrasi + seeder
 ```bash
 php artisan migrate:fresh --seed
 ```
 
-### 6. Jalankan Server
-Sistem Distora Analytics sudah siap! Jalankan *local development server*:
+5. Jalankan aplikasi
 ```bash
 php artisan serve
 ```
-Aplikasi bisa diakses di browser melalui: **http://127.0.0.1:8000**
 
----
+Akses: `http://127.0.0.1:8000`
 
-## 🔑 Akun Uji Coba (Login)
+## Akun Default (Seeder)
+- Admin
+  - Email: `admin@distora.com`
+  - Password: `password`
+- Salesman
+  - Email: `sales@distora.com`
+  - Password: `password`
 
-Setelah instalasi (dan seeding) selesai, gunakan akun bawaan ini untuk mengakses sistem:
-
-**Sebagai Admin (Full Access)**
-- **Email:** `admin@distora.com`
-- **Password:** `password`
-
-**Sebagai Salesman (Scoped Access)**
-*(Note: Data dashboard salesman baru akan muncul setelah Admin melakukan Upload Excel data transaksi bulanan yang ada nama salesman-nya).*
-- **Email:** `sales@distora.com`
-- **Password:** `password`
-
----
-
-## ⚙️ Fitur Tambahan (Cron Job / Email Otomatis)
-
-Sistem Distora dilengkapi pengiriman Email Rekap Harian otomatis setiap pukul 17.00.
-Untuk mengaktifkannya:
-1. Setel *SMTP* di file `.env` kamu (contoh `MAIL_MAILER=smtp`, dst).
-2. Jika jalan di server sungguhan (Linux/CPanel), tambahkan perintah ini di Cron Job server:
-   `* * * * * cd /path-ke-folder-distora && php artisan schedule:run >> /dev/null 2>&1`
-   `php artisan schedule:work`
-
----
-
-## 🧪 Testing & Quality Assurance
-
-Sistem ini dilengkapi dengan unit dan feature testing bawaan Laravel untuk menjaga stabilitas kode.
-
-### Cara Menjalankan Test:
-Untuk memastikan fitur Dashboard dan DSS berjalan normal setelah melakukan perubahan kode, jalankan:
+## Testing
 ```bash
 php artisan test
 ```
 
-### Penting untuk Pemeliharaan:
-- **Data 90 Hari**: Seluruh pilar "Pusat Kendali" menggunakan limitasi data 90 hari terakhir untuk kecepatan dan relevansi.
-- **Mapping Stok**: Pastikan kode cabang di file Excel (`bjm`, `brb`, `btl`) tidak berubah agar sistem *mapping* otomatis di `InsightController` tetap sinkron dengan ID transaksi (`OBM_01`, dst).
-
----
-
-## 🛠️ Git Workflow (Pemeliharaan)
-
-Gunakan perintah standar Git untuk melakukan update:
+## Git Workflow
 ```bash
 git add .
-git commit -m "Update Fitur: Pusat Kendali Keputusan 8-Pilar & Excel Export"
+git commit -m "docs: update README"
 git push origin main
 ```
 
----
-
-<p align="center">
-  Didesain dan dikembangkan sebagai solusi modern <strong>Distribution Analytics System</strong>. <br>
-  Semoga sukses menjaga target! 🎯🚀
-</p>
+## Lisensi
+Private/internal project.
