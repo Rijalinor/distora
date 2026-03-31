@@ -147,10 +147,12 @@ class SalesImportController extends Controller
      */
     protected function deleteUploadData(UploadHistory $uploadHistory): void
     {
-        // Delete sales via transactions
-        $transactionIds = Transaction::where('upload_history_id', $uploadHistory->id)
-            ->pluck('id');
-        Sale::whereIn('transaction_id', $transactionIds)->delete();
+        // Delete sales via subquery to avoid loading large ID lists into memory.
+        Sale::whereIn('transaction_id', function ($query) use ($uploadHistory) {
+            $query->select('id')
+                ->from('transactions')
+                ->where('upload_history_id', $uploadHistory->id);
+        })->delete();
 
         // Delete transactions
         Transaction::where('upload_history_id', $uploadHistory->id)->delete();

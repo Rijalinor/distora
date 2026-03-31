@@ -6,6 +6,7 @@ use App\Models\ImportLog;
 use App\Models\Product;
 use App\Models\Stock;
 use Illuminate\Support\Collection;
+use Illuminate\Database\QueryException;
 use Maatwebsite\Excel\Concerns\SkipsEmptyRows;
 use Maatwebsite\Excel\Concerns\ToModel;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
@@ -22,6 +23,7 @@ class StockSheetImport implements ToModel, WithHeadingRow, SkipsEmptyRows, WithC
     protected int $rowNumber = 1;
     protected int $successRows = 0;
     protected int $failedRows = 0;
+    protected array $productIdBySku = [];
 
     public function __construct(int $uploadHistoryId, string $branch)
     {
@@ -31,12 +33,12 @@ class StockSheetImport implements ToModel, WithHeadingRow, SkipsEmptyRows, WithC
 
     public function chunkSize(): int
     {
-        return 500;
+        return 1000;
     }
 
     public function batchSize(): int
     {
-        return 500;
+        return 1000;
     }
 
     public function registerEvents(): array
@@ -78,19 +80,16 @@ class StockSheetImport implements ToModel, WithHeadingRow, SkipsEmptyRows, WithC
             throw new \RuntimeException('Missing Item#.');
         }
 
-        $product = Product::firstOrCreate(
-            ['sku' => $itemNo],
-            [
-                'name' => $this->value($data, 'item_description') ?? 'Unknown Product',
-                'category' => null,
-            ]
+        $productId = $this->resolveProductId(
+            $itemNo,
+            $this->value($data, 'item_description') ?? 'Unknown Product'
         );
 
         $this->successRows++;
 
         return new Stock([
             'upload_history_id' => $this->uploadHistoryId,
-            'product_id' => $product->id,
+            'product_id' => $productId,
             'branch' => $this->branch,
             'principle_code' => $this->value($data, 'principle'),
             'principle_name' => $this->value($data, 'principle_description'),
@@ -116,6 +115,29 @@ class StockSheetImport implements ToModel, WithHeadingRow, SkipsEmptyRows, WithC
             'age_of_goods' => (int) $this->toDecimal($this->value($data, 'age_of_goods')),
             'raw_data' => $data,
         ]);
+    }
+
+    protected function resolveProductId(string $sku, string $name): int
+    {
+        if (isset($this->productIdBySku[$sku])) {
+            return $this->productIdBySku[$sku];
+        }
+
+        $id = Product::where('sku', $sku)->value('id');
+        if (!$id) {
+            try {
+                $id = Product::create([
+                    'sku' => $sku,
+                    'name' => $name,
+                    'category' => null,
+                ])->id;
+            } catch (QueryException $e) {
+                $id = Product::where('sku', $sku)->value('id');
+            }
+        }
+
+        $this->productIdBySku[$sku] = (int) $id;
+        return (int) $id;
     }
 
     protected function logError(string $message, array $row): void

@@ -9,6 +9,7 @@ use App\Models\Outlet;
 use App\Models\Product;
 use App\Models\Stock;
 use App\Models\Period;
+use App\Models\MonthlyProductSalesStat;
 use App\Models\UploadHistory;
 use App\Models\MlForecastRun;
 use App\Services\MlForecastEvaluator;
@@ -59,6 +60,14 @@ class InsightController extends Controller
         // 3-month window that includes the selected period.
         $ids = array_merge([$period->id], $period->getPrecedingIds(2));
         return array_values(array_unique($ids));
+    }
+
+    /**
+     * 3-month historical window before active period (exclude active).
+     */
+    private function get3MonthsBeforeActive(\App\Models\Period $period): array
+    {
+        return $period->getPrecedingIds(3);
     }
 
     /**
@@ -721,7 +730,7 @@ class InsightController extends Controller
             ->sort()
             ->values();
 
-        $stockAlerts = $this->cachedResult('stock_forecast_v6', $activePeriod, function() use ($branch, $principle, $activePeriod) {
+        $stockAlerts = $this->cachedResult('stock_forecast_v7', $activePeriod, function() use ($branch, $principle, $activePeriod) {
             return $this->getStockForecastData($branch, $principle, $activePeriod);
         });
 
@@ -738,28 +747,30 @@ class InsightController extends Controller
     private function getStockForecastData($branch, $principle = 'all', $period = null)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
-        $precedingIds = $this->get3MonthRange($period);
+        $precedingIds = $this->get3MonthsBeforeActive($period);
         if (count($precedingIds) < 3) return [];
 
-        $query = Sale::join('products', 'sales.product_id', '=', 'products.id')
-            ->join('transactions', 'sales.transaction_id', '=', 'transactions.id')
-            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
-            ->whereIn('upload_histories.period_id', $precedingIds)
+        $query = MonthlyProductSalesStat::query()
+            ->join('products', 'monthly_product_sales_stats.product_id', '=', 'products.id')
+            ->whereIn('monthly_product_sales_stats.period_id', $precedingIds)
             ->select(
-                'products.id', 'products.name',
-                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle_name"),
-                DB::raw('SUM(sales.qty) as total_qty_sold')
+                'products.id',
+                'products.name',
+                'monthly_product_sales_stats.principle_name',
+                DB::raw('SUM(monthly_product_sales_stats.qty_sold) as total_qty_sold')
             )
-            ->groupBy('products.id', 'products.name', 'principle_name')
+            ->groupBy('products.id', 'products.name', 'monthly_product_sales_stats.principle_name')
             ->having('total_qty_sold', '>', 0);
-        
-        $this->applyBranchFilter($query, $branch);
 
-        if ($principle !== 'all') {
-            $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) = ?", [$principle]);
+        if ($branch !== 'all') {
+            $query->where('monthly_product_sales_stats.branch_dist_id', $branch);
         }
 
-        $salesVelocity = $query->get()->keyBy('id');
+        if ($principle !== 'all') {
+            $query->where('monthly_product_sales_stats.principle_name', $principle);
+        }
+
+        $salesVelocity = $query->get();
 
         $stockMap = ['OBM_01' => 'bjm', 'OBM_02' => 'brb', 'OBM_03' => 'btl'];
         $branchCode = ($branch !== 'all') ? ($stockMap[$branch] ?? $branch) : null;
@@ -783,7 +794,8 @@ class InsightController extends Controller
 
 
         $alerts = [];
-        foreach ($salesVelocity as $productId => $salesData) {
+        foreach ($salesVelocity as $salesData) {
+            $productId = $salesData->id;
             if (!isset($currentStocks[$productId])) continue;
             $stock = $currentStocks[$productId]->current_stock;
             if ($stock <= 0) continue;
@@ -845,23 +857,33 @@ class InsightController extends Controller
         $p2 = isset($displayIds[1]) ? Period::find($displayIds[1]) : null;
         $p3 = isset($displayIds[0]) ? Period::find($displayIds[0]) : null;
 
-        $query = Sale::join('transactions', 'sales.transaction_id', '=', 'transactions.id')
-            ->join('upload_histories', 'transactions.upload_history_id', '=', 'upload_histories.id')
-            ->leftJoin('products', 'sales.product_id', '=', 'products.id')
-            ->whereIn('upload_histories.period_id', $precedingIds)
-            ->where('sales.qty', '>', 0)
+        $query = MonthlyProductSalesStat::query()
+            ->leftJoin('products', 'monthly_product_sales_stats.product_id', '=', 'products.id')
+            ->whereIn('monthly_product_sales_stats.period_id', $precedingIds)
             ->select(
-                'products.id', 'products.name', 'products.category', 'upload_histories.period_id',
-                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) as principle_name"),
-                DB::raw('SUM(sales.qty) as qty'),
-                DB::raw('SUM(sales.total) as total_net'),
-                DB::raw('SUM(sales.disc_item) as total_disc')
+                'products.id',
+                'products.name',
+                'products.category',
+                'monthly_product_sales_stats.period_id',
+                'monthly_product_sales_stats.principle_name',
+                DB::raw('SUM(monthly_product_sales_stats.qty_sold) as qty'),
+                DB::raw('SUM(monthly_product_sales_stats.total_net) as total_net'),
+                DB::raw('SUM(monthly_product_sales_stats.total_disc_item) as total_disc')
             )
-            ->groupBy('products.id', 'products.name', 'products.category', 'principle_name', 'upload_histories.period_id');
-        
-        $this->applyBranchFilter($query, $branch);
+            ->groupBy(
+                'products.id',
+                'products.name',
+                'products.category',
+                'monthly_product_sales_stats.principle_name',
+                'monthly_product_sales_stats.period_id'
+            );
+
+        if ($branch !== 'all') {
+            $query->where('monthly_product_sales_stats.branch_dist_id', $branch);
+        }
+
         if ($principle !== 'all') {
-            $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) = ?", [$principle]);
+            $query->where('monthly_product_sales_stats.principle_name', $principle);
         }
 
         $salesRaw = $query->get();

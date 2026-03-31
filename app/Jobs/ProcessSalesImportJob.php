@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Imports\SalesWorkbookImport;
 use App\Models\UploadHistory;
+use App\Services\MonthlySalesAggregationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -62,6 +63,18 @@ class ProcessSalesImportJob implements ShouldQueue
                 'failed' => $failedRows,
                 'skipped' => $skippedRows,
             ]);
+
+            if ($uploadHistory->period_id) {
+                try {
+                    app(MonthlySalesAggregationService::class)->rebuildForPeriod((int) $uploadHistory->period_id);
+                } catch (\Throwable $e) {
+                    Log::warning('Failed to rebuild monthly aggregates after import', [
+                        'upload_history_id' => $uploadHistory->id,
+                        'period_id' => $uploadHistory->period_id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
         } catch (\Throwable $e) {
             Log::error('Sales import failed', [
                 'upload_history_id' => $uploadHistory->id,

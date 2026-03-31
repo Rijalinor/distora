@@ -10,6 +10,7 @@ use App\Models\Transaction;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\QueryException;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use Maatwebsite\Excel\Concerns\SkipsEmptyRows;
 use Maatwebsite\Excel\Concerns\ToCollection;
@@ -25,6 +26,10 @@ class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, 
     protected int $successRows = 0;
     protected int $failedRows = 0;
     protected int $skippedRows = 0;
+    protected array $outletIdByCode = [];
+    protected array $productIdBySku = [];
+    protected array $transactionIdByInvoice = [];
+    protected array $existingSaleKeyCache = [];
 
     public function __construct(int $uploadHistoryId)
     {
@@ -33,7 +38,7 @@ class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, 
 
     public function chunkSize(): int
     {
-        return 500;
+        return 1000;
     }
 
     public function collection(Collection $rows): void
@@ -130,56 +135,62 @@ class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, 
             ?? $this->parseDate($this->value($data, 'so_date'))
             ?? now()->toDateString();
 
-        return DB::transaction(function () use (
-            $data, $invoiceNumber, $outletCode, $outletName,
-            $productSku, $productName, $seqNo,
-            $qty, $price, $grossPrice, $lineTotal,
-            $discItem, $discInt, $discExt, $discInvoice, $vat,
-            $soldAt, $transactionDate
+        $outletId = $this->resolveOutletId(
+            $outletCode,
+            $outletName,
+            $this->mergeAddress(
+                $this->value($data, 'outlet_add1'),
+                $this->value($data, 'outlet_add2')
+            )
+        );
+
+        $productId = $this->resolveProductId(
+            $productSku,
+            $productName,
+            $this->value($data, 'item_class_desc')
+        );
+
+        $transactionId = $this->resolveTransactionId(
+            $invoiceNumber,
+            $outletId,
+            $transactionDate,
+            $this->buildTransactionMeta($data)
+        );
+
+        $saleKey = $transactionId . ':' . $productId . ':' . $seqNo;
+        if (isset($this->existingSaleKeyCache[$saleKey])) {
+            return 'skipped';
+        }
+
+        $existsInDb = Sale::where('transaction_id', $transactionId)
+            ->where('product_id', $productId)
+            ->where('seq_no', $seqNo)
+            ->exists();
+
+        if ($existsInDb) {
+            $this->existingSaleKeyCache[$saleKey] = true;
+            return 'skipped';
+        }
+
+        DB::transaction(function () use (
+            $transactionId,
+            $productId,
+            $seqNo,
+            $qty,
+            $price,
+            $grossPrice,
+            $discItem,
+            $discInt,
+            $discExt,
+            $discInvoice,
+            $lineTotal,
+            $vat,
+            $soldAt,
+            $data
         ) {
-            $outlet = Outlet::firstOrCreate(
-                ['code' => $outletCode],
-                [
-                    'name' => $outletName,
-                    'address' => $this->mergeAddress(
-                        $this->value($data, 'outlet_add1'),
-                        $this->value($data, 'outlet_add2')
-                    ),
-                ]
-            );
-
-            $product = Product::firstOrCreate(
-                ['sku' => $productSku],
-                [
-                    'name' => $productName,
-                    'category' => $this->value($data, 'item_class_desc'),
-                ]
-            );
-
-            $transaction = Transaction::firstOrCreate(
-                ['invoice_number' => $invoiceNumber],
-                [
-                    'outlet_id' => $outlet->id,
-                    'upload_history_id' => $this->uploadHistoryId,
-                    'transaction_date' => $transactionDate,
-                    'total' => 0,
-                    'meta' => $this->buildTransactionMeta($data),
-                ]
-            );
-
-            // Dedup: check if this exact line item already exists
-            $existingSale = Sale::where('transaction_id', $transaction->id)
-                ->where('product_id', $product->id)
-                ->where('seq_no', $seqNo)
-                ->first();
-
-            if ($existingSale) {
-                return 'skipped';
-            }
-
             Sale::create([
-                'transaction_id' => $transaction->id,
-                'product_id' => $product->id,
+                'transaction_id' => $transactionId,
+                'product_id' => $productId,
                 'seq_no' => $seqNo,
                 'qty' => $qty,
                 'price' => $price,
@@ -194,11 +205,85 @@ class SalesSheetImport implements ToCollection, WithHeadingRow, SkipsEmptyRows, 
                 'raw_data' => $data,
             ]);
 
-            $transaction->total += $lineTotal;
-            $transaction->save();
-
-            return 'inserted';
+            DB::table('transactions')
+                ->where('id', $transactionId)
+                ->increment('total', $lineTotal);
         });
+
+        $this->existingSaleKeyCache[$saleKey] = true;
+        return 'inserted';
+    }
+
+    protected function resolveOutletId(string $outletCode, string $outletName, ?string $address): int
+    {
+        if (isset($this->outletIdByCode[$outletCode])) {
+            return $this->outletIdByCode[$outletCode];
+        }
+
+        $id = Outlet::where('code', $outletCode)->value('id');
+        if (!$id) {
+            try {
+                $id = Outlet::create([
+                    'code' => $outletCode,
+                    'name' => $outletName,
+                    'address' => $address,
+                ])->id;
+            } catch (QueryException $e) {
+                $id = Outlet::where('code', $outletCode)->value('id');
+            }
+        }
+
+        $this->outletIdByCode[$outletCode] = (int) $id;
+        return (int) $id;
+    }
+
+    protected function resolveProductId(string $productSku, string $productName, ?string $category): int
+    {
+        if (isset($this->productIdBySku[$productSku])) {
+            return $this->productIdBySku[$productSku];
+        }
+
+        $id = Product::where('sku', $productSku)->value('id');
+        if (!$id) {
+            try {
+                $id = Product::create([
+                    'sku' => $productSku,
+                    'name' => $productName,
+                    'category' => $category,
+                ])->id;
+            } catch (QueryException $e) {
+                $id = Product::where('sku', $productSku)->value('id');
+            }
+        }
+
+        $this->productIdBySku[$productSku] = (int) $id;
+        return (int) $id;
+    }
+
+    protected function resolveTransactionId(string $invoiceNumber, int $outletId, string $transactionDate, array $meta): int
+    {
+        if (isset($this->transactionIdByInvoice[$invoiceNumber])) {
+            return $this->transactionIdByInvoice[$invoiceNumber];
+        }
+
+        $id = Transaction::where('invoice_number', $invoiceNumber)->value('id');
+        if (!$id) {
+            try {
+                $id = Transaction::create([
+                    'invoice_number' => $invoiceNumber,
+                    'outlet_id' => $outletId,
+                    'upload_history_id' => $this->uploadHistoryId,
+                    'transaction_date' => $transactionDate,
+                    'total' => 0,
+                    'meta' => $meta,
+                ])->id;
+            } catch (QueryException $e) {
+                $id = Transaction::where('invoice_number', $invoiceNumber)->value('id');
+            }
+        }
+
+        $this->transactionIdByInvoice[$invoiceNumber] = (int) $id;
+        return (int) $id;
     }
 
     protected function logError(string $message, array $row): void
