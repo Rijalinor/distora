@@ -336,4 +336,89 @@ class ReportController extends Controller
 
         return view('reports.gross-vs-net', compact('data'));
     }
+
+    public function taxVatCompliance(Request $request)
+    {
+        $dateFrom = $request->get('from');
+        $dateTo = $request->get('to');
+        $branch = $request->get('branch', 'all');
+        $principle = $request->get('principle', 'all');
+
+        $baseQuery = Transaction::query()
+            ->join('sales', 'transactions.id', '=', 'sales.transaction_id')
+            ->where('sales.total', '>', 0);
+
+        if ($dateFrom) {
+            $baseQuery->whereDate('transactions.transaction_date', '>=', $dateFrom);
+        }
+        if ($dateTo) {
+            $baseQuery->whereDate('transactions.transaction_date', '<=', $dateTo);
+        }
+        if ($branch !== 'all') {
+            $baseQuery->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.dist_id')) = ?", [$branch]);
+        }
+        if ($principle !== 'all') {
+            $baseQuery->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(transactions.meta, '$.principle_name')) = ?", [$principle]);
+        }
+
+        $taxInvoiceExpr = "CASE 
+            WHEN COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.tax_invoice')), ''),
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.tax_invoice_no')), ''),
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.faktur_pajak')), ''),
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.faktur')), ''),
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sales.raw_data, '$.taxinv_no')), '')
+            ) IS NOT NULL THEN 1
+            ELSE 0 END";
+
+        $monthly = (clone $baseQuery)
+            ->select(
+                DB::raw("DATE_FORMAT(transactions.transaction_date, '%Y-%m') as period"),
+                DB::raw('SUM(sales.total) as dpp_net'),
+                DB::raw('SUM(sales.vat) as vat_output'),
+                DB::raw('COUNT(*) as sales_rows'),
+                DB::raw("SUM($taxInvoiceExpr) as rows_with_tax_invoice")
+            )
+            ->groupBy('period')
+            ->orderByDesc('period')
+            ->get()
+            ->map(function ($row) {
+                $row->compliance_pct = $row->sales_rows > 0
+                    ? round(($row->rows_with_tax_invoice / $row->sales_rows) * 100, 2)
+                    : 0;
+                return $row;
+            });
+
+        $summary = (clone $baseQuery)
+            ->select(
+                DB::raw('SUM(sales.total) as dpp_net'),
+                DB::raw('SUM(sales.vat) as vat_output'),
+                DB::raw('COUNT(*) as sales_rows'),
+                DB::raw("SUM($taxInvoiceExpr) as rows_with_tax_invoice")
+            )
+            ->first();
+
+        $summary->compliance_pct = $summary->sales_rows > 0
+            ? round(($summary->rows_with_tax_invoice / $summary->sales_rows) * 100, 2)
+            : 0;
+
+        $principles = Transaction::query()
+            ->whereNotNull('meta')
+            ->select(DB::raw("JSON_UNQUOTE(JSON_EXTRACT(meta, '$.principle_name')) as principle_name"))
+            ->distinct()
+            ->pluck('principle_name')
+            ->filter()
+            ->sort()
+            ->values();
+
+        return view('reports.tax-vat-compliance', compact(
+            'monthly',
+            'summary',
+            'dateFrom',
+            'dateTo',
+            'branch',
+            'principle',
+            'principles'
+        ));
+    }
 }

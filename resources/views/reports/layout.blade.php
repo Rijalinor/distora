@@ -24,6 +24,7 @@
                 <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 1.25rem 0 0.75rem; padding-left: 0.75rem;">💰 Keuangan</div>
                 <a href="{{ route('reports.discount-summary') }}" class="report-nav {{ request()->routeIs('reports.discount-summary') ? 'active' : '' }}">Ringkasan Diskon</a>
                 <a href="{{ route('reports.gross-vs-net') }}" class="report-nav {{ request()->routeIs('reports.gross-vs-net') ? 'active' : '' }}">Gross vs Net</a>
+                <a href="{{ route('reports.tax-vat-compliance') }}" class="report-nav {{ request()->routeIs('reports.tax-vat-compliance') ? 'active' : '' }}">Tax & VAT Compliance</a>
             </div>
         </aside>
 

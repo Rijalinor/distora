@@ -207,6 +207,9 @@ class InsightController extends Controller
             // 4. Stock alerts
             $stockAlertsCount = count($this->getStockForecastData($branch, 'all', $activePeriod));
 
+            // 4b. Stock redistribution opportunities
+            $redistributionCount = count($this->getStockRedistributionData($branch, 'all', $activePeriod, 0, 20, 8));
+
             // 5. Dead Stock
             $deadStockCount = $this->getDeadStockData($branch, $activePeriod)->count();
 
@@ -215,6 +218,7 @@ class InsightController extends Controller
                 'bundles' => $bestBundle,
                 'advisor' => $advisorCount,
                 'stock_alerts' => $stockAlertsCount,
+                'redistribution' => $redistributionCount,
                 'dead_stock' => $deadStockCount,
             ];
         });
@@ -1080,6 +1084,166 @@ class InsightController extends Controller
             }
         }
         return $results;
+    }
+
+    // --- PILLAR 5B: STOCK REDISTRIBUTION ADVISOR ---
+    public function stockRedistribution(Request $request)
+    {
+        $branch = $this->getBranchFilter($request);
+        $principle = $request->query('principle', 'all');
+        $activePeriod = $this->getSelectedPeriod($request);
+        $needyMaxSwc = (float) $request->query('needy_max_swc', 0);
+        $donorMinSwc = (float) $request->query('donor_min_swc', 20);
+        $targetSwc = (float) $request->query('target_swc', 8);
+
+        $principles = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $activePeriod->id))
+            ->distinct()
+            ->pluck('principle_name')
+            ->filter()
+            ->sort()
+            ->values();
+
+        $advice = $this->cachedResult('stock_redistribution_v1', $activePeriod, function () use (
+            $branch,
+            $principle,
+            $activePeriod,
+            $needyMaxSwc,
+            $donorMinSwc,
+            $targetSwc
+        ) {
+            return $this->getStockRedistributionData($branch, $principle, $activePeriod, $needyMaxSwc, $donorMinSwc, $targetSwc);
+        });
+
+        return view('insights.stock-redistribution', [
+            'data' => $advice,
+            'selected_branch' => $branch,
+            'selected_principle' => $principle,
+            'principles' => $principles,
+            'activePeriod' => $activePeriod,
+            'allPeriods' => Period::ordered()->get(),
+            'needy_max_swc' => $needyMaxSwc,
+            'donor_min_swc' => $donorMinSwc,
+            'target_swc' => $targetSwc,
+        ]);
+    }
+
+    private function getStockRedistributionData(
+        string $branch,
+        string $principle = 'all',
+        ?Period $period = null,
+        float $needyMaxSwc = 0,
+        float $donorMinSwc = 20,
+        float $targetSwc = 8
+    ): array {
+        $period = $period ?? $this->getSelectedPeriod(request());
+
+        $latestUploadId = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $period->id))->max('upload_history_id');
+        if (!$latestUploadId) {
+            $latestUploadId = Stock::max('upload_history_id');
+        }
+        if (!$latestUploadId) {
+            return [];
+        }
+
+        $rows = Stock::query()
+            ->join('products', 'stocks.product_id', '=', 'products.id')
+            ->where('stocks.upload_history_id', $latestUploadId)
+            ->when($principle !== 'all', fn($q) => $q->where('stocks.principle_name', $principle))
+            ->select(
+                'stocks.product_id',
+                'products.name as product_name',
+                'stocks.principle_name',
+                'stocks.branch',
+                DB::raw('SUM(stocks.on_hand_base) as stock_qty'),
+                DB::raw('SUM(stocks.was) as was_qty')
+            )
+            ->groupBy('stocks.product_id', 'products.name', 'stocks.principle_name', 'stocks.branch')
+            ->get();
+
+        $targetBranch = null;
+        if ($branch !== 'all') {
+            $stockMap = ['OBM_01' => 'bjm', 'OBM_02' => 'brb', 'OBM_03' => 'btl'];
+            $targetBranch = $stockMap[$branch] ?? strtolower($branch);
+        }
+
+        $byProduct = [];
+        foreach ($rows as $row) {
+            $swc = ((float) $row->was_qty > 0) ? ((float) $row->stock_qty / (float) $row->was_qty) : 999;
+            $byProduct[$row->product_id][] = (object) [
+                'product_id' => (int) $row->product_id,
+                'product_name' => $row->product_name,
+                'principle_name' => $row->principle_name,
+                'branch' => strtolower((string) $row->branch),
+                'stock_qty' => (float) $row->stock_qty,
+                'was_qty' => (float) $row->was_qty,
+                'swc' => (float) $swc,
+            ];
+        }
+
+        $result = [];
+        foreach ($byProduct as $productId => $branches) {
+            $needyBranches = array_values(array_filter($branches, function ($b) use ($needyMaxSwc, $targetBranch) {
+                if ($targetBranch && $b->branch !== $targetBranch) return false;
+                return $b->swc <= $needyMaxSwc;
+            }));
+            if (empty($needyBranches)) continue;
+
+            $donorBranches = array_values(array_filter($branches, fn($b) => $b->swc > $donorMinSwc));
+            usort($donorBranches, fn($a, $b) => $b->swc <=> $a->swc);
+
+            foreach ($needyBranches as $needy) {
+                $deficitQty = max(0, ($targetSwc * $needy->was_qty) - $needy->stock_qty);
+                if ($deficitQty <= 0) continue;
+
+                $recommendation = 'ORDER_PABRIK';
+                $donorBranchName = null;
+                $transferQty = 0.0;
+                $donorSwc = null;
+
+                foreach ($donorBranches as $donor) {
+                    if ($donor->branch === $needy->branch) continue;
+                    $donorExcessQty = max(0, $donor->stock_qty - ($donorMinSwc * $donor->was_qty));
+                    if ($donorExcessQty <= 0) continue;
+
+                    $transferQty = min($deficitQty, $donorExcessQty);
+                    if ($transferQty > 0) {
+                        $recommendation = 'MUTASI_STOK';
+                        $donorBranchName = $this->formatStockBranchName($donor->branch);
+                        $donorSwc = round($donor->swc, 1);
+                        break;
+                    }
+                }
+
+                $result[] = (object) [
+                    'product_id' => $needy->product_id,
+                    'product_name' => $needy->product_name,
+                    'principle_name' => $needy->principle_name,
+                    'need_branch' => $this->formatStockBranchName($needy->branch),
+                    'need_swc' => round($needy->swc, 1),
+                    'need_stock' => (float) $needy->stock_qty,
+                    'target_swc' => $targetSwc,
+                    'deficit_qty' => (float) ceil($deficitQty),
+                    'recommendation' => $recommendation,
+                    'donor_branch' => $donorBranchName,
+                    'donor_swc' => $donorSwc,
+                    'transfer_qty' => (float) ceil($transferQty),
+                ];
+            }
+        }
+
+        usort($result, fn($a, $b) => [$a->recommendation, -$a->deficit_qty] <=> [$b->recommendation, -$b->deficit_qty]);
+        return $result;
+    }
+
+    private function formatStockBranchName(string $branch): string
+    {
+        return match (strtolower($branch)) {
+            'bjm' => 'Banjarmasin',
+            'brb' => 'Barabai',
+            'btl' => 'Batulicin',
+            'ampah' => 'Ampah',
+            default => strtoupper($branch),
+        };
     }
 
     // --- PILLAR 7: DEAD STOCK ---

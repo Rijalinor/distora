@@ -6,8 +6,8 @@
 <div class="mb-4">
     <div class="mb-4 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;">
         <div>
-            <a href="{{ route('insights.index', ['branch' => $selected_branch, 'period_id' => $activePeriod->id]) }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">← Kembali</a>
-            <h1 style="font-size: 1.5rem; font-weight: 700;">🛒 Rekomendasi Order Pabrik</h1>
+            <a href="{{ route('insights.index', ['branch' => $selected_branch, 'period_id' => $activePeriod->id]) }}" class="btn-back" style="text-decoration: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;"><- Kembali</a>
+            <h1 style="font-size: 1.5rem; font-weight: 700;">Rekomendasi Order Pabrik</h1>
             <p style="color: var(--text-muted); font-size: 0.9rem;">Estimasi kebutuhan stok periode <strong>{{ $activePeriod->name }}</strong>.</p>
         </div>
 
@@ -58,10 +58,10 @@
 
 <!-- Cara Membaca Card -->
 <div class="main-card mb-4" style="background: var(--bg-card); border-radius: 16px; border: 1px solid var(--border); padding: 1.5rem; border-left: 4px solid var(--accent);">
-    <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem;">📖 Instruksi Order Barang</h3>
+    <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem;">Instruksi Order Barang</h3>
     <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5;">
         Menu ini membantu Anda menghitung berapa banyak barang yang harus dipesan ke pabrik. 
-        Sistem menggunakan **Rata-rata Penjualan 3 Bulan (Total ÷ 90 hari)** untuk hasil yang lebih stabil.
+        Sistem menggunakan **Rata-rata Penjualan 3 Bulan (Total / 90 hari)** untuk hasil yang lebih stabil.
         Masukkan <strong>"Target Hari (Buffer)"</strong> untuk menentukan berapa hari stok tersebut harus bertahan (contoh: 30 hari). 
         Tambahkan <strong>"Lonjakan (%)"</strong> jika diprediksi ada kenaikan permintaan.
     </p>
@@ -70,11 +70,19 @@
 <!-- Global Target Days Control -->
 <div class="mb-3 d-flex align-items-center gap-3" style="display: flex; align-items: center; gap: 1rem; background: var(--bg-card); padding: 1rem; border-radius: 12px; border: 1px solid var(--border);">
     <div style="flex: 1;">
-        <label style="display: block; font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.5rem;">⚙️ SET TARGET HARI (PROSES GLOBAL)</label>
+        <label style="display: block; font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.5rem;">SET TARGET HARI (PROSES GLOBAL)</label>
         <div style="display: flex; align-items: center; gap: 1rem;">
              <input type="range" id="globalTargetDays" min="7" max="90" value="30" style="flex: 1; accent-color: var(--accent);">
              <span id="targetValueDisplay" style="font-weight: 800; color: var(--accent); font-size: 1.2rem; min-width: 80px;">30 Hari</span>
         </div>
+    </div>
+    <div style="width: 1px; height: 50px; background: var(--border); margin: 0 0.5rem;"></div>
+    <div style="flex: 0 0 auto; min-width: 180px;">
+        <label style="display: block; font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 0.5rem;">Lead Time Pabrik</label>
+        <select id="leadTimeDays" style="width: 100%; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: 8px; padding: 0.45rem 0.6rem; font-size: 0.85rem;">
+            <option value="14" selected>Normal (14 hari)</option>
+            <option value="21">Konservatif (21 hari)</option>
+        </select>
     </div>
     @if($isAiMode)
     <div style="width: 1px; height: 50px; background: var(--border); margin: 0 1rem;"></div>
@@ -84,7 +92,7 @@
             <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 22px;"></span>
         </label>
         <div style="display: flex; flex-direction: column;">
-            <span style="font-size: 0.8rem; font-weight: 800; color: #6366f1;">🧠 SMART AI MODE</span>
+            <span style="font-size: 0.8rem; font-weight: 800; color: #6366f1;">SMART AI MODE</span>
             <span style="font-size: 0.65rem; color: var(--text-muted);">Gunakan prediksi ML dibanding rata-rata</span>
         </div>
     </div>
@@ -116,7 +124,7 @@
 
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;" title="Total Penjualan 3 Bulan / 3">AMS</th>
                     @if($isAiMode)
-                    <th style="padding: 1rem 0.5rem; color: #6366f1; font-size: 0.75rem; text-transform: uppercase; text-align: right; background: rgba(99, 102, 241, 0.05); border-radius: 8px 8px 0 0;" title="Prediksi Machine Learning">🧠 AI Forecast</th>
+                    <th style="padding: 1rem 0.5rem; color: #6366f1; font-size: 0.75rem; text-transform: uppercase; text-align: right; background: rgba(99, 102, 241, 0.05); border-radius: 8px 8px 0 0;" title="Prediksi Machine Learning">AI Forecast</th>
                     @endif
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: center; width: 100px;">Surge</th>
                     <th style="padding: 1rem 0.5rem; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; text-align: right;">Ctn Size</th>
@@ -183,7 +191,7 @@
                                 {{ number_format($item->ai_prediction, 0, ',', '.') }}
                             </div>
                             <div style="font-size: 0.65rem; color: {{ $item->ai_trend == 'growing' ? '#10b981' : ($item->ai_trend == 'declining' ? '#ef4444' : 'var(--text-muted)') }}; font-weight: 600;">
-                                {{ $item->ai_trend == 'growing' ? '↑ Trend Naik' : ($item->ai_trend == 'declining' ? '↓ Trend Turun' : '→ Stabil') }}
+                                {{ $item->ai_trend == 'growing' ? 'Trend Naik' : ($item->ai_trend == 'declining' ? 'Trend Turun' : 'Stabil') }}
                             </div>
                         </td>
                         @endif
@@ -199,6 +207,8 @@
                              <div class="order-ctn-text" style="color: var(--text-primary); font-size: 0.8rem; font-weight: 600;">0 Ctn</div>
                              <strong class="order-qty-text" style="color: var(--accent); font-size: 1.1rem;">0</strong>
                              <span style="font-size: 0.7rem; color: var(--text-muted);">Pcs</span>
+                             <div class="order-action-text" style="font-size: 0.72rem; margin-top: 0.25rem; color: var(--text-secondary); font-weight: 700;">Hitung...</div>
+                             <div class="order-risk-text" style="font-size: 0.68rem; color: var(--text-muted);">Risk: -</div>
                         </td>
 
                     </tr>
@@ -210,10 +220,10 @@
 
 <div class="mt-4 d-flex justify-content-end gap-3" style="display: flex; justify-content: flex-end; gap: 1rem;">
     <button onclick="exportToExcel()" class="btn-secondary" style="background: #10b981; color: white; border: none; padding: 0.8rem 2rem; border-radius: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
-        📊 Export ke Excel
+        Export ke Excel
     </button>
     <button onclick="window.print()" class="btn-primary" style="background: var(--accent); color: white; border: none; padding: 0.8rem 2rem; border-radius: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
-        🖨️ Cetak Daftar Pesanan
+        Cetak Daftar Pesanan
     </button>
 </div>
 
@@ -226,10 +236,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const globalTargetInput = document.getElementById('globalTargetDays');
     const targetDisplay = document.getElementById('targetValueDisplay');
     const aiModeToggle = document.getElementById('aiModeToggle');
+    const leadTimeSelect = document.getElementById('leadTimeDays');
     
     function calculateOrders() {
         const isAiMode = aiModeToggle ? aiModeToggle.checked : false;
         const targetDays = parseInt(globalTargetInput.value);
+        const leadTimeDays = parseInt(leadTimeSelect.value || '14');
         targetDisplay.innerText = targetDays + ' Hari';
         
         document.querySelectorAll('.order-row').forEach(row => {
@@ -240,14 +252,21 @@ document.addEventListener('DOMContentLoaded', function() {
             const ctnSize = parseInt(row.dataset.ctnSize) || 1;
             const surge = parseFloat(row.querySelector('.surge-input').value) || 0;
             
-            // BASE CALCULATION MODE
             const baseMonthly = isAiMode ? aiForecast : ams;
             const baseDaily = isAiMode ? (aiForecast / 30) : ads;
 
-            // Re-calc logic: (BaseDaily * (1 + surge/100) * targetDays) - currentStock
             const adjustedVelocity = baseDaily * (1 + (surge / 100));
             const totalNeed = adjustedVelocity * targetDays;
             const recommend = Math.max(0, Math.ceil(totalNeed - stock));
+            const daysOfCover = adjustedVelocity > 0 ? (stock / adjustedVelocity) : 99999;
+            const orderNow = daysOfCover <= leadTimeDays;
+            const orderInDays = Math.max(0, Math.floor(daysOfCover - leadTimeDays));
+            const riskDays = Math.max(0, Math.floor(daysOfCover));
+            const riskDate = new Date();
+            riskDate.setDate(riskDate.getDate() + riskDays);
+            const riskDateText = adjustedVelocity > 0
+                ? riskDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+                : '-';
             
             const m1 = parseFloat(row.dataset.qtyM1);
             const m2 = parseFloat(row.dataset.qtyM2);
@@ -263,24 +282,45 @@ document.addEventListener('DOMContentLoaded', function() {
             const ctnValue = (recommend / ctnSize).toFixed(1);
             ctnText.innerText = ctnValue + ' Ctn';
 
-            // Detailed Tooltip with Monthly Breakdown
+            const actionText = row.querySelector('.order-action-text');
+            const riskText = row.querySelector('.order-risk-text');
+            if (adjustedVelocity <= 0) {
+                actionText.innerText = 'Tidak ada demand';
+                actionText.style.color = 'var(--text-muted)';
+                riskText.innerText = 'Risk: -';
+            } else if (orderNow) {
+                actionText.innerText = `Pesan Sekarang (LT ${leadTimeDays}h)`;
+                actionText.style.color = '#ef4444';
+                riskText.innerText = `Risk stockout: ${riskDateText} (${riskDays} hari)`;
+            } else {
+                actionText.innerText = `Pesan ${orderInDays} hari lagi`;
+                actionText.style.color = '#10b981';
+                riskText.innerText = `Risk stockout: ${riskDateText} (${riskDays} hari)`;
+            }
+
             const resultCell = row.querySelector('.order-result-cell');
             const formulaDesc = `HISTORI PENJUALAN:\n` +
                                 `- ${n1}: ${m1.toLocaleString('id-ID')}\n` +
                                 `- ${n2}: ${m2.toLocaleString('id-ID')}\n` +
                                 `- ${n3}: ${m3.toLocaleString('id-ID')}\n` +
                                 `-----------------------------------\n` +
-                                `${isAiMode ? '🤖 AI PREDICTION' : 'RATA-RATA (AMS)'}: ${baseMonthly.toLocaleString('id-ID', {maximumFractionDigits:0})} /bln\n\n` +
+                                `${isAiMode ? 'AI PREDICTION' : 'RATA-RATA (AMS)'}: ${baseMonthly.toLocaleString('id-ID', {maximumFractionDigits:0})} /bln\n\n` +
+                                `LEAD TIME PABRIK: ${leadTimeDays} hari\n` +
+                                `Days of Cover: ${daysOfCover.toLocaleString('id-ID', {maximumFractionDigits:1})} hari\n\n` +
                                 `PERHITUNGAN ORDER:\n` +
                                 `- Target (${targetDays} hari): ${(baseDaily * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
                                 `- Lonjakan (${surge}%): +${((baseDaily * surge/100) * targetDays).toLocaleString('id-ID', {maximumFractionDigits:0})} pcs\n` +
                                 `- Stok Saat Ini: -${stock.toLocaleString('id-ID')} pcs\n` +
                                 `=========================\n` +
+                                `AKSI: ${orderNow ? 'Pesan Sekarang' : ('Pesan ' + orderInDays + ' hari lagi')}\n` +
+                                `RISK STOCKOUT: ${riskDateText}\n` +
                                 `REKOMENDASI: ${recommend.toLocaleString('id-ID')} pcs (${ctnValue} ctn)`;
             resultCell.title = formulaDesc;
             
             if (recommend > 0) {
-                orderText.parentElement.parentElement.style.background = isAiMode ? 'rgba(99, 102, 241, 0.05)' : 'rgba(0, 153, 255, 0.05)';
+                orderText.parentElement.parentElement.style.background = orderNow
+                    ? 'rgba(239, 68, 68, 0.07)'
+                    : (isAiMode ? 'rgba(99, 102, 241, 0.05)' : 'rgba(0, 153, 255, 0.05)');
             } else {
                 orderText.parentElement.parentElement.style.background = 'transparent';
             }
@@ -288,7 +328,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     globalTargetInput.addEventListener('input', calculateOrders);
-    aiModeToggle.addEventListener('change', calculateOrders);
+    leadTimeSelect.addEventListener('change', calculateOrders);
+    if (aiModeToggle) {
+        aiModeToggle.addEventListener('change', calculateOrders);
+    }
     const surgeInputs = document.querySelectorAll('.surge-input');
     surgeInputs.forEach(input => input.addEventListener('input', calculateOrders));
     
@@ -303,12 +346,12 @@ document.addEventListener('DOMContentLoaded', function() {
         const n2 = firstRow?.dataset.m2Name || 'M-1';
         const n3 = firstRow?.dataset.m3Name || 'M-0';
 
-        // Prepare data for Excel
         const data = [
             ["LAPORAN REKOMENDASI ORDER PABRIK (SANGAT DETAIL)"],
             ["Wilayah", branch],
             ["Prinsipel", principle],
             ["Target Stok", targetDays + " Hari"],
+            ["Lead Time", leadTimeSelect.value + " Hari"],
             ["Tanggal Export", new Date().toLocaleString()],
             [],
             ["PRINSIPEL", "NAMA PRODUK", "STOK", n1, n2, n3, "AMS (BLN)", "SURGE", "ISI/CTN", "ORDER (PCS)", "ORDER (CTN)"]
@@ -351,7 +394,6 @@ document.addEventListener('DOMContentLoaded', function() {
         XLSX.writeFile(wb, fileName);
     };
 
-    // Initial calc
     calculateOrders();
 });
 </script>

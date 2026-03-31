@@ -57,6 +57,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/ai-advisor', [InsightController::class, 'aiAdvisor'])->name('insights.ai-advisor');
             Route::get('/salesman-audit', [InsightController::class, 'salesmanAudit'])->name('insights.salesman-audit');
             Route::get('/stock-forecast', [InsightController::class, 'stockForecast'])->name('insights.stock-forecast');
+            Route::get('/stock-redistribution', [InsightController::class, 'stockRedistribution'])->name('insights.stock-redistribution');
             Route::get('/purchase-order', [InsightController::class, 'purchaseOrder'])->name('insights.purchase-order');
             Route::get('/principal-report', [InsightController::class, 'principalReport'])->name('insights.principal-report');
             Route::get('/dead-stock', [InsightController::class, 'deadStock'])->name('insights.dead-stock');
@@ -94,6 +95,7 @@ Route::middleware('auth')->group(function () {
             // Financial
             Route::get('/discount-summary', [ReportController::class, 'discountSummary'])->name('reports.discount-summary');
             Route::get('/gross-vs-net', [ReportController::class, 'grossVsNet'])->name('reports.gross-vs-net');
+            Route::get('/tax-vat-compliance', [ReportController::class, 'taxVatCompliance'])->name('reports.tax-vat-compliance');
         });
     });
 });
