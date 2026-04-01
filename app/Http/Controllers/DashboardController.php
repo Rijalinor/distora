@@ -93,9 +93,14 @@ class DashboardController extends Controller
             ->where('name', $salesName)
             ->first();
 
+        $totalTargetAmount = Target::where('period_id', $activePeriod->id)
+            ->where('type', 'salesman')
+            ->where('name', $salesName)
+            ->sum('target_amount');
+
         $kpiProgress = 0;
-        if ($target && $target->target_amount > 0) {
-            $kpiProgress = round(($totalOmzet / $target->target_amount) * 100, 1);
+        if ($totalTargetAmount > 0) {
+            $kpiProgress = round(($totalOmzet / $totalTargetAmount) * 100, 1);
         }
 
         // 4. List of Outlets served (Paginated, ordered by latest transaction)
@@ -137,7 +142,7 @@ class DashboardController extends Controller
             'activePeriod', 'salesName',
             'totalOmzet', 'totalTransaksi', 'totalOutlets', 'totalItems',
             'totalRetur', 'totalReturCount',
-            'target', 'kpiProgress',
+            'target', 'totalTargetAmount', 'kpiProgress',
             'outlets', 'recentSales', 'recentReturns'
         ));
     }

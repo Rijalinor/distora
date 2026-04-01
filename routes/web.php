@@ -26,6 +26,9 @@ Route::middleware('auth')->group(function () {
 
     Route::middleware('admin')->group(function () {
         Route::get('/upload/{uploadHistory}', [DashboardController::class, 'show'])->name('dashboard.show');
+        Route::get('/targets/suggest', [TargetController::class, 'suggest'])->name('targets.suggest');
+        Route::get('/targets/team-allocation-preview', [TargetController::class, 'teamAllocationPreview'])->name('targets.team-allocation-preview');
+        Route::post('/targets/team-allocation-apply', [TargetController::class, 'teamAllocationApply'])->name('targets.team-allocation-apply');
         Route::post('/targets', [TargetController::class, 'store'])->name('targets.store');
         Route::delete('/targets/{target}', [TargetController::class, 'destroy'])->name('targets.destroy');
 

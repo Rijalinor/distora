@@ -11,6 +11,7 @@ class Target extends Model
         'period_id',
         'type',
         'name',
+        'principal_name',
         'target_amount',
     ];
 

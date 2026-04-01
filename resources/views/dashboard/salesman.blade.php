@@ -35,7 +35,7 @@
     <!-- KPI Progress -->
     <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem;">
         <h2 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem;">🎯 Target KPI Bulan Ini</h2>
-        @if($target)
+        @if(($totalTargetAmount ?? 0) > 0)
             @php
                 $color = $kpiProgress >= 100 ? 'var(--success)' : ($kpiProgress >= 70 ? 'var(--warning)' : 'var(--danger)');
             @endphp
@@ -43,7 +43,7 @@
                 <div>
                     <div style="font-size: 0.85rem; color: var(--text-muted);">
                         Aktual: <strong style="color: var(--text-primary);">Rp {{ number_format($totalOmzet, 0, ',', '.') }}</strong> /
-                        Target: <strong style="color: var(--text-primary);">Rp {{ number_format($target->target_amount, 0, ',', '.') }}</strong>
+                        Target: <strong style="color: var(--text-primary);">Rp {{ number_format($totalTargetAmount, 0, ',', '.') }}</strong>
                     </div>
                 </div>
                 <div style="font-size: 1.75rem; font-weight: 800; color: {{ $color }};">

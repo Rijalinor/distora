@@ -13,6 +13,7 @@ use App\Models\MonthlyProductSalesStat;
 use App\Models\UploadHistory;
 use App\Models\MlForecastRun;
 use App\Services\MlForecastEvaluator;
+use App\Services\InsightIndexSummaryService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -179,49 +180,32 @@ class InsightController extends Controller
         $activePeriod = $this->getSelectedPeriod($request);
         $periodIds = $this->get3MonthRange($activePeriod);
         [$startDate, $endDate] = $activePeriod->getRange();
-        
-        $data = $this->cachedResult('index_summary_v5', $activePeriod, function() use ($branch, $activePeriod, $periodIds, $startDate, $endDate) {
-            // 1. RFM Summary
-            $rfmCount = Transaction::whereIn('upload_history_id', function($q) use ($periodIds) {
+
+        $data = app(InsightIndexSummaryService::class)->build($activePeriod, $branch, [
+            'outlets' => function () use ($periodIds, $branch) {
+                $rfmCount = Transaction::whereIn('upload_history_id', function ($q) use ($periodIds) {
                     $q->select('id')->from('upload_histories')->whereIn('period_id', $periodIds);
-                })
-                ->where('total', '>', 0);
-            $this->applyBranchFilter($rfmCount, $branch);
-            $totalOutlets = $rfmCount->distinct('outlet_id')->count();
-
-            // 2. Bundling Sample
-            $bestBundle = DB::table('sales as s1')
-                ->join('sales as s2', 's1.transaction_id', '=', 's2.transaction_id')
-                ->join('transactions', 's1.transaction_id', '=', 'transactions.id')
-                ->where('s1.product_id', '<', 's2.product_id')
-                ->where('s1.total', '>', 0)
-                ->where('s2.total', '>', 0)
-                ->whereBetween('transactions.transaction_date', [$startDate, $endDate]);
-            $this->applyBranchFilter($bestBundle, $branch);
-            $bestBundle = $bestBundle->select(DB::raw('COUNT(*) as count'))->first()->count > 0 ? 'Tersedia' : 'N/A';
-
-            // 3. AI Advisor (Pillar 4)
-            $advisorData = $this->getAiAdvisorData($branch, $activePeriod);
-            $advisorCount = count($advisorData);
-
-            // 4. Stock alerts
-            $stockAlertsCount = count($this->getStockForecastData($branch, 'all', $activePeriod));
-
-            // 4b. Stock redistribution opportunities
-            $redistributionCount = count($this->getStockRedistributionData($branch, 'all', $activePeriod, 0, 20, 8));
-
-            // 5. Dead Stock
-            $deadStockCount = $this->getDeadStockData($branch, $activePeriod)->count();
-
-            return [
-                'outlets' => $totalOutlets,
-                'bundles' => $bestBundle,
-                'advisor' => $advisorCount,
-                'stock_alerts' => $stockAlertsCount,
-                'redistribution' => $redistributionCount,
-                'dead_stock' => $deadStockCount,
-            ];
-        });
+                })->where('total', '>', 0);
+                $this->applyBranchFilter($rfmCount, $branch);
+                return $rfmCount->distinct('outlet_id')->count();
+            },
+            'bundles' => function () use ($startDate, $endDate, $branch) {
+                $bestBundle = DB::table('sales as s1')
+                    ->join('sales as s2', 's1.transaction_id', '=', 's2.transaction_id')
+                    ->join('transactions', 's1.transaction_id', '=', 'transactions.id')
+                    ->where('s1.product_id', '<', 's2.product_id')
+                    ->where('s1.total', '>', 0)
+                    ->where('s2.total', '>', 0)
+                    ->whereBetween('transactions.transaction_date', [$startDate, $endDate]);
+                $this->applyBranchFilter($bestBundle, $branch);
+                return $bestBundle->select(DB::raw('COUNT(*) as count'))->first()->count > 0 ? 'Tersedia' : 'N/A';
+            },
+            // Lightweight index counters (avoid full AI/ML path on landing page).
+            'advisor' => fn () => $this->getAnomaliesData($branch, $activePeriod)->count(),
+            'stock_alerts' => fn () => (int) $this->getStockForecastData($branch, 'all', $activePeriod, true),
+            'redistribution' => fn () => (int) $this->getStockRedistributionData($branch, 'all', $activePeriod, 0, 20, 8, true),
+            'dead_stock' => fn () => $this->getDeadStockData($branch, $activePeriod)->count(),
+        ]);
 
         $allPeriods = \App\Models\Period::ordered()->get();
         $uiData = [
@@ -748,11 +732,11 @@ class InsightController extends Controller
         ]);
     }
 
-    private function getStockForecastData($branch, $principle = 'all', $period = null)
+    private function getStockForecastData($branch, $principle = 'all', $period = null, bool $countOnly = false)
     {
         $period = $period ?? $this->getSelectedPeriod(request());
         $precedingIds = $this->get3MonthsBeforeActive($period);
-        if (count($precedingIds) < 3) return [];
+        if (count($precedingIds) < 3) return $countOnly ? 0 : [];
 
         $query = MonthlyProductSalesStat::query()
             ->join('products', 'monthly_product_sales_stats.product_id', '=', 'products.id')
@@ -798,6 +782,7 @@ class InsightController extends Controller
 
 
         $alerts = [];
+        $alertsCount = 0;
         foreach ($salesVelocity as $salesData) {
             $productId = $salesData->id;
             if (!isset($currentStocks[$productId])) continue;
@@ -807,15 +792,22 @@ class InsightController extends Controller
             $daysToOos = $stock / $avgDailySales;
 
             if ($daysToOos <= 14) {
-                $alerts[] = (object) [
-                    'product_name' => $salesData->name,
-                    'principle_name' => $salesData->principle_name,
-                    'current_stock' => $stock,
-                    'avg_daily' => (float) $avgDailySales,
-                    'days_to_oos' => round($daysToOos),
-                    'urgency' => $daysToOos <= 3 ? 'danger' : 'warning'
-                ];
+                if ($countOnly) {
+                    $alertsCount++;
+                } else {
+                    $alerts[] = (object) [
+                        'product_name' => $salesData->name,
+                        'principle_name' => $salesData->principle_name,
+                        'current_stock' => $stock,
+                        'avg_daily' => (float) $avgDailySales,
+                        'days_to_oos' => round($daysToOos),
+                        'urgency' => $daysToOos <= 3 ? 'danger' : 'warning'
+                    ];
+                }
             }
+        }
+        if ($countOnly) {
+            return $alertsCount;
         }
         usort($alerts, fn($a, $b) => $a->days_to_oos <=> $b->days_to_oos);
         return $alerts;
@@ -1133,8 +1125,9 @@ class InsightController extends Controller
         ?Period $period = null,
         float $needyMaxSwc = 0,
         float $donorMinSwc = 20,
-        float $targetSwc = 8
-    ): array {
+        float $targetSwc = 8,
+        bool $countOnly = false
+    ): array|int {
         $period = $period ?? $this->getSelectedPeriod(request());
 
         $latestUploadId = Stock::whereHas('uploadHistory', fn($q) => $q->where('period_id', $period->id))->max('upload_history_id');
@@ -1181,6 +1174,7 @@ class InsightController extends Controller
         }
 
         $result = [];
+        $count = 0;
         foreach ($byProduct as $productId => $branches) {
             $needyBranches = array_values(array_filter($branches, function ($b) use ($needyMaxSwc, $targetBranch) {
                 if ($targetBranch && $b->branch !== $targetBranch) return false;
@@ -1214,23 +1208,30 @@ class InsightController extends Controller
                     }
                 }
 
-                $result[] = (object) [
-                    'product_id' => $needy->product_id,
-                    'product_name' => $needy->product_name,
-                    'principle_name' => $needy->principle_name,
-                    'need_branch' => $this->formatStockBranchName($needy->branch),
-                    'need_swc' => round($needy->swc, 1),
-                    'need_stock' => (float) $needy->stock_qty,
-                    'target_swc' => $targetSwc,
-                    'deficit_qty' => (float) ceil($deficitQty),
-                    'recommendation' => $recommendation,
-                    'donor_branch' => $donorBranchName,
-                    'donor_swc' => $donorSwc,
-                    'transfer_qty' => (float) ceil($transferQty),
-                ];
+                if ($countOnly) {
+                    $count++;
+                } else {
+                    $result[] = (object) [
+                        'product_id' => $needy->product_id,
+                        'product_name' => $needy->product_name,
+                        'principle_name' => $needy->principle_name,
+                        'need_branch' => $this->formatStockBranchName($needy->branch),
+                        'need_swc' => round($needy->swc, 1),
+                        'need_stock' => (float) $needy->stock_qty,
+                        'target_swc' => $targetSwc,
+                        'deficit_qty' => (float) ceil($deficitQty),
+                        'recommendation' => $recommendation,
+                        'donor_branch' => $donorBranchName,
+                        'donor_swc' => $donorSwc,
+                        'transfer_qty' => (float) ceil($transferQty),
+                    ];
+                }
             }
         }
 
+        if ($countOnly) {
+            return $count;
+        }
         usort($result, fn($a, $b) => [$a->recommendation, -$a->deficit_qty] <=> [$b->recommendation, -$b->deficit_qty]);
         return $result;
     }
